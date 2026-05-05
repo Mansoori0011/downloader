@@ -42,54 +42,56 @@ jobs:
             
             const page = await browser.newPage();
             
-            // مانیتور کردن درخواست‌های شبکه برای پیدا کردن لینک‌های ویدیو
             const videoUrls = new Set();
+            const pageVideoLinks = [];
             
+            // مانیتور کردن درخواست‌های شبکه
             page.on('request', request => {
               const requestUrl = request.url();
-              // الگوهای مختلف لینک ویدیو
               if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
                   requestUrl.match(/\/video\//i) ||
                   requestUrl.match(/\/get_file\//i) ||
-                  requestUrl.match(/\/hls\//i)) {
+                  requestUrl.match(/\/hls\//i) ||
+                  requestUrl.match(/\/view_video\.php/i)) {
                 videoUrls.add(requestUrl);
-                console.log('Found video URL:', requestUrl);
+                console.log('Found URL:', requestUrl.substring(0, 100));
               }
             });
             
             console.log('Loading page:', url);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             
-            // اسکرول به پایین برای لود شدن همه محتوا
+            // اسکرول با روش صحیح
             console.log('Scrolling page...');
             for (let i = 0; i < 5; i++) {
               await page.evaluate(() => {
                 window.scrollBy(0, window.innerHeight);
               });
-              await page.waitForTimeout(2000);
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
             
-            // استخراج لینک‌های فیلم از المنت‌های صفحه
-            const pageVideoLinks = await page.$$eval('a', (elements) => {
-              const links = [];
+            // استخراج لینک‌ها از المنت‌های صفحه
+            const links = await page.$$eval('a', (elements) => {
+              const results = [];
               elements.forEach(a => {
                 const href = a.href;
                 if (href && (href.includes('/view_video.php') || 
                     href.includes('/video/') || 
                     href.includes('/watch') ||
                     href.includes('/v/'))) {
-                  links.push({
+                  results.push({
                     url: href,
                     title: a.innerText?.trim() || a.title || 'بدون عنوان'
                   });
                 }
               });
-              return links;
+              return results;
             });
+            
+            links.forEach(link => pageVideoLinks.push(link));
             
             await browser.close();
             
-            // ذخیره نتایج
             const result = {
               sourceUrl: url,
               timestamp: new Date().toISOString(),
@@ -98,8 +100,12 @@ jobs:
             };
             
             fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
-            console.log(`Found ${videoUrls.size} video URLs from network`);
-            console.log(`Found ${pageVideoLinks.length} video links from page`);
+            console.log('\n========================================');
+            console.log('نتایج:');
+            console.log('========================================');
+            console.log('لینک‌های یافت شده از شبکه:', videoUrls.size);
+            console.log('لینک‌های صفحات فیلم:', pageVideoLinks.length);
+            console.log('========================================');
             
           })().catch(err => {
             console.error('Error:', err.message);
@@ -116,10 +122,8 @@ jobs:
           
           echo "در حال استخراج لینک‌ها از: $PAGE_URL"
           
-          # اجرای اسکریپت پاپیتیر
           node extract.js "$PAGE_URL" "$FOLDER_NAME/extracted_links.json"
           
-          # استخراج لینک‌های فیلم از JSON
           echo "═══════════════════════════════════════════════════════════" > "$FOLDER_NAME/video_links.txt"
           echo "لیست لینک‌های فیلم‌ها" >> "$FOLDER_NAME/video_links.txt"
           echo "آدرس صفحه: $PAGE_URL" >> "$FOLDER_NAME/video_links.txt"
@@ -127,23 +131,22 @@ jobs:
           echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
           echo "" >> "$FOLDER_NAME/video_links.txt"
           
-          # لینک‌های مستقیم ویدیویی (از شبکه)
-          echo "🎬 لینک‌های مستقیم ویدیو:" >> "$FOLDER_NAME/video_links.txt"
+          # لینک‌های مستقیم
+          echo "🎬 لینک‌های مستقیم پیدا شده:" >> "$FOLDER_NAME/video_links.txt"
           echo "════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
           cat "$FOLDER_NAME/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "$FOLDER_NAME/video_links.txt"
           
           echo "" >> "$FOLDER_NAME/video_links.txt"
           echo "" >> "$FOLDER_NAME/video_links.txt"
           
-          # لینک‌های صفحات فیلم (برای استخراج جداگانه)
-          echo "📄 لینک‌های صفحات فیلم (برای استخراج لینک مستقیم هرکدام):" >> "$FOLDER_NAME/video_links.txt"
+          # لینک‌های صفحات فیلم
+          echo "📄 لینک‌های صفحات فیلم:" >> "$FOLDER_NAME/video_links.txt"
           echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
           cat "$FOLDER_NAME/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "$FOLDER_NAME/video_links.txt"
           
-          # ذخیره لینک‌های صفحات فیلم در فایل جداگانه
+          # ذخیره لینک‌های صفحات فیلم
           cat "$FOLDER_NAME/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "$FOLDER_NAME/video_pages.txt"
           
-          # ایجاد فایل README
           VIDEO_COUNT=$(cat "$FOLDER_NAME/video_pages.txt" 2>/dev/null | wc -l)
           DIRECT_COUNT=$(cat "$FOLDER_NAME/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
           
@@ -152,7 +155,7 @@ jobs:
 
           - **آدرس صفحه**: $PAGE_URL
           - **تاریخ**: $(date)
-          - **تعداد لینک‌های مستقیم ویدیو**: $DIRECT_COUNT
+          - **تعداد لینک‌های مستقیم**: $DIRECT_COUNT
           - **تعداد لینک‌های صفحات فیلم**: $VIDEO_COUNT
 
           ## فایل‌های موجود
@@ -160,13 +163,8 @@ jobs:
           | فایل | توضیح |
           |------|-------|
           | [video_links.txt](./video_links.txt) | لیست کامل لینک‌ها |
-          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم (برای استخراج جداگانه) |
+          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم |
           | [extracted_links.json](./extracted_links.json) | اطلاعات کامل JSON |
-
-          ## نحوه استفاده
-
-          1. برای استخراج لینک مستقیم هر فیلم، لینک آن را در فایل [video_pages.txt](./video_pages.txt) پیدا کنید
-          2. از Action قبلی (استخراج لینک فیلم) برای هر لینک استفاده کنید
 
           ---
           تولید شده توسط GitHub Actions
@@ -178,8 +176,8 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ نتایج استخراج:"
           echo "═══════════════════════════════════════════════════════════"
-          echo "تعداد لینک‌های مستقیم ویدیو: $DIRECT_COUNT"
-          echo "تعداد لینک‌های صفحات فیلم: $VIDEO_COUNT"
+          echo "لینک‌های مستقیم: $DIRECT_COUNT"
+          echo "لینک‌های صفحات فیلم: $VIDEO_COUNT"
           echo ""
 
       - name: ذخیره در مخزن
