@@ -1,47 +1,279 @@
-name: 🌐 Extract Video Links with yt-dlp
+name: 🌐 Extract Video Links from Website
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس صفحه یا لیست پخش'
+        description: 'آدرس سایت مورد نظر'
         required: true
         type: string
+      max_pages:
+        description: 'حداکثر صفحات برای اسکرول'
+        required: false
+        type: string
+        default: '3'
 
 jobs:
-  extract:
+  extract-videos:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Install yt-dlp
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip
-          pip3 install yt-dlp
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
-      - name: Extract video info
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Playwright
+        run: |
+          npm install -D playwright
+          npx playwright install chromium
+      
+      - name: Extract video links
         run: |
           URL="${{ github.event.inputs.url }}"
-          echo "در حال استخراج اطلاعات از: $URL"
+          MAX_PAGES="${{ github.event.inputs.max_pages }}"
+          FOLDER_NAME="extracted_$(date +'%Y%m%d_%H%M%S')"
           
-          # دریافت لینک‌های ویدیو
-          yt-dlp --get-url "$URL" 2>/dev/null | tee direct-urls.txt
+          # ساخت پوشه اصلی در مخزن
+          mkdir -p "$FOLDER_NAME"
           
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "اطلاعات کامل ویدیوها:"
-          echo "═══════════════════════════════════════════════════════════"
-          yt-dlp --dump-json --flat-playlist "$URL" 2>/dev/null | jq -r '.title + " | " + .url' > video-list.txt
-          cat video-list.txt
+          cat > extract.js << 'EOF'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+          const path = require('path');
           
-          # ذخیره لینک‌های مستقیم دانلود (بهترین کیفیت)
-          yt-dlp -f best -g "$URL" 2>/dev/null | tee best-quality-urls.txt
+          (async () => {
+            const url = process.env.URL;
+            const maxPages = parseInt(process.env.MAX_PAGES) || 3;
+            const folderName = process.env.FOLDER_NAME;
+            
+            // ساخت پوشه‌های داخلی
+            const videosDir = path.join(folderName, 'videos');
+            const linksDir = path.join(folderName, 'links');
+            fs.mkdirSync(videosDir, { recursive: true });
+            fs.mkdirSync(linksDir, { recursive: true });
+            
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+            
+            console.log('📂 در حال باز کردن سایت:', url);
+            await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+            
+            // اسکرول خودکار
+            console.log('📜 در حال اسکرول صفحه...');
+            for (let i = 0; i < maxPages; i++) {
+              await page.evaluate(() => {
+                window.scrollBy(0, window.innerHeight);
+              });
+              await page.waitForTimeout(1500);
+            }
+            
+            await page.waitForTimeout(3000);
+            
+            // الگوهای شناسایی لینک‌های ویدیویی
+            const videoPatterns = [
+              /\.(mp4|m3u8|mkv|avi|mov|wmv|flv|webm)(\?|$)/i,
+              /\/video\//i,
+              /\/watch\?/i,
+              /\/v\//i,
+              /\/embed\//i,
+              /youtube\.com\/watch/i,
+              /youtu\.be\//i,
+              /vimeo\.com\//i,
+              /aparat\.com\/v\//i,
+              /namasha\.com\/v\//i,
+            ];
+            
+            // استخراج لینک‌ها
+            const allLinks = await page.$$eval('a', (elements) => {
+              return elements.map(a => ({
+                href: a.href,
+                text: a.innerText?.trim() || a.title || ''
+              }));
+            });
+            
+            // فیلتر لینک‌های ویدیویی
+            const videoLinks = allLinks.filter(link => {
+              if (!link.href) return false;
+              return videoPatterns.some(pattern => pattern.test(link.href));
+            });
+            
+            // استخراج لینک‌های src از ویدیوها
+            const videoSources = await page.$$eval('video, source, iframe', (elements) => {
+              const results = [];
+              elements.forEach(el => {
+                if (el.src) results.push({ type: el.tagName, url: el.src });
+                if (el.getAttribute('data-src')) results.push({ type: el.tagName, url: el.getAttribute('data-src') });
+                if (el.getAttribute('data-video-url')) results.push({ type: el.tagName, url: el.getAttribute('data-video-url') });
+              });
+              return results;
+            });
+            
+            // استخراج درخواست‌های شبکه
+            const videoRequests = [];
+            page.on('request', request => {
+              const requestUrl = request.url();
+              if (videoPatterns.some(pattern => pattern.test(requestUrl))) {
+                videoRequests.push({
+                  url: requestUrl,
+                  method: request.method(),
+                  resourceType: request.resourceType()
+                });
+              }
+            });
+            
+            await page.reload({ waitUntil: 'networkidle' });
+            await page.waitForTimeout(5000);
+            
+            // ========== ذخیره همه نتایج در پوشه‌ها ==========
+            
+            // 1. ذخیره لینک‌های ویدیویی به صورت TXT
+            let textOutput = '';
+            textOutput += '═══════════════════════════════════════════════════════════\n';
+            textOutput += 'لینک‌های ویدیویی استخراج شده\n';
+            textOutput += '═══════════════════════════════════════════════════════════\n\n';
+            textOutput += `آدرس سایت: ${url}\n`;
+            textOutput += `تاریخ: ${new Date().toLocaleString('fa-IR')}\n\n`;
+            
+            videoLinks.forEach((link, i) => {
+              textOutput += `[${i+1}] ${link.text.substring(0, 100)}\n${link.href}\n\n`;
+            });
+            
+            if (videoSources.length > 0) {
+              textOutput += '\n═══════════════════════════════════════════════════════════\n';
+              textOutput += 'منابع ویدیویی (video/source/iframe)\n';
+              textOutput += '═══════════════════════════════════════════════════════════\n\n';
+              videoSources.forEach((src, i) => {
+                textOutput += `[${i+1}] نوع: ${src.type}\n${src.url}\n\n`;
+              });
+            }
+            
+            if (videoRequests.length > 0) {
+              textOutput += '\n═══════════════════════════════════════════════════════════\n';
+              textOutput += 'درخواست‌های شبکه ویدیویی\n';
+              textOutput += '═══════════════════════════════════════════════════════════\n\n';
+              videoRequests.forEach((req, i) => {
+                textOutput += `[${i+1}] ${req.method} - ${req.resourceType}\n${req.url}\n\n`;
+              });
+            }
+            
+            fs.writeFileSync(path.join(linksDir, 'video-links.txt'), textOutput);
+            
+            // 2. ذخیره به صورت JSON
+            const jsonResults = {
+              url: url,
+              timestamp: new Date().toISOString(),
+              stats: {
+                totalLinks: allLinks.length,
+                videoLinks: videoLinks.length,
+                videoSources: videoSources.length,
+                networkRequests: videoRequests.length
+              },
+              videoLinks: videoLinks,
+              videoSources: videoSources,
+              networkVideoRequests: videoRequests
+            };
+            
+            fs.writeFileSync(path.join(linksDir, 'video-links.json'), JSON.stringify(jsonResults, null, 2));
+            
+            // 3. ذخیره لینک‌های مستقیم به صورت جداگانه در پوشه videos
+            const directUrls = [...videoLinks.map(v => v.href), ...videoSources.map(v => v.url)];
+            const uniqueUrls = [...new Set(directUrls)];
+            
+            fs.writeFileSync(path.join(videosDir, 'direct-urls.txt'), uniqueUrls.join('\n'));
+            
+            // 4. ایجاد فایل README در پوشه اصلی
+            const readmeContent = `# نتایج استخراج لینک ویدیو
+
+- **آدرس سایت**: ${url}
+- **تاریخ**: ${new Date().toLocaleString('fa-IR')}
+- **تعداد کل لینک‌ها**: ${allLinks.length}
+- **لینک‌های ویدیویی**: ${videoLinks.length}
+- **منابع ویدیویی**: ${videoSources.length}
+- **درخواست‌های شبکه**: ${videoRequests.length}
+
+## محتویات پوشه‌ها
+
+| پوشه | توضیح |
+|------|-------|
+| \`links/video-links.txt\` | لیست ساده لینک‌های ویدیویی |
+| \`links/video-links.json\` | اطلاعات کامل به صورت JSON |
+| \`videos/direct-urls.txt\` | لینک‌های مستقیم ویدیوها |
+
+---
+تولید شده توسط GitHub Actions
+`;
+            
+            fs.writeFileSync(path.join(folderName, 'README.md'), readmeContent);
+            
+            console.log('\n═══════════════════════════════════════════════════════════');
+            console.log('📊 آمار استخراج:');
+            console.log('═══════════════════════════════════════════════════════════');
+            console.log(`🔗 کل لینک‌های صفحه: ${allLinks.length}`);
+            console.log(`🎬 لینک‌های ویدیویی: ${videoLinks.length}`);
+            console.log(`📹 منابع ویدیویی: ${videoSources.length}`);
+            console.log(`🌐 درخواست‌های شبکه: ${videoRequests.length}`);
+            console.log('\n💾 فایل‌های ذخیره شده در پوشه:', folderName);
+            console.log(`   📁 ${folderName}/`);
+            console.log(`   ├── 📄 README.md`);
+            console.log(`   ├── 📂 links/`);
+            console.log(`   │   ├── video-links.txt`);
+            console.log(`   │   └── video-links.json`);
+            console.log(`   └── 📂 videos/`);
+            console.log(`       └── direct-urls.txt`);
+            
+            // ذخیره نام پوشه برای مرحله بعد
+            fs.writeFileSync('folder-name.txt', folderName);
+            
+            await browser.close();
+          })().catch(err => {
+            console.error('❌ خطا:', err.message);
+            process.exit(1);
+          });
+          EOF
+          
+          export URL="$URL"
+          export MAX_PAGES="$MAX_PAGES"
+          export FOLDER_NAME="$FOLDER_NAME"
+          node extract.js
+          
+          echo "FOLDER_NAME=$FOLDER_NAME" >> $GITHUB_ENV
       
-      - name: Upload results
+      - name: Display extracted links
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║                    لینک‌های استخراج شده                        ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+          if [ -f "$FOLDER_NAME/links/video-links.txt" ]; then
+            head -100 "$FOLDER_NAME/links/video-links.txt"
+          else
+            echo "هیچ لینکی استخراج نشد"
+          fi
+      
+      - name: Commit and push to repository
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add "$FOLDER_NAME/"
+          git commit -m "Add extracted video links from ${{ github.event.inputs.url }}" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }} || echo "Push failed"
+      
+      - name: Upload results as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: video-info
-          path: |
-            direct-urls.txt
-            best-quality-urls.txt
-            video-list.txt
+          name: extracted-video-links-${{ github.run_id }}
+          path: ${{ env.FOLDER_NAME }}/
+      
+      - name: Show folder location
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════════════════"
+          echo "✅ فایل‌ها با موفقیت ذخیره شدند!"
+          echo "📁 پوشه: $FOLDER_NAME"
+          echo "🔗 لینک دسترسی: https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/$FOLDER_NAME"
+          echo "════════════════════════════════════════════════════════════════"
