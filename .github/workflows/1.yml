@@ -1,66 +1,197 @@
-name: Extract Video Link (PornTube Style)
+name: استخراج همه لینک‌های فیلم از صفحه
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'لینک ویدیو (مثلاً .../view_video.php?viewkey=xxxxx)'
+      page_url:
+        description: 'آدرس صفحه (مثل صفحه اصلی یا صفحه دسته‌بندی)'
         required: true
         type: string
+        default: 'https://www.example.com'
 
 jobs:
-  extract:
+  extract-all:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install yt-dlp
+      - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip
           pip3 install yt-dlp
+          npm init -y
+          npm install puppeteer
 
-      - name: Extract Direct Links
+      - name: ساخت اسکریپت استخراج لینک‌ها
         run: |
-          URL="${{ github.event.inputs.url }}"
+          cat > extract.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          
+          (async () => {
+            const url = process.argv[2];
+            const outputFile = process.argv[3];
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            
+            const page = await browser.newPage();
+            
+            // مانیتور کردن درخواست‌های شبکه برای پیدا کردن لینک‌های ویدیو
+            const videoUrls = new Set();
+            
+            page.on('request', request => {
+              const requestUrl = request.url();
+              // الگوهای مختلف لینک ویدیو
+              if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
+                  requestUrl.match(/\/video\//i) ||
+                  requestUrl.match(/\/get_file\//i) ||
+                  requestUrl.match(/\/hls\//i)) {
+                videoUrls.add(requestUrl);
+                console.log('Found video URL:', requestUrl);
+              }
+            });
+            
+            console.log('Loading page:', url);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            
+            // اسکرول به پایین برای لود شدن همه محتوا
+            console.log('Scrolling page...');
+            for (let i = 0; i < 5; i++) {
+              await page.evaluate(() => {
+                window.scrollBy(0, window.innerHeight);
+              });
+              await page.waitForTimeout(2000);
+            }
+            
+            // استخراج لینک‌های فیلم از المنت‌های صفحه
+            const pageVideoLinks = await page.$$eval('a', (elements) => {
+              const links = [];
+              elements.forEach(a => {
+                const href = a.href;
+                if (href && (href.includes('/view_video.php') || 
+                    href.includes('/video/') || 
+                    href.includes('/watch') ||
+                    href.includes('/v/'))) {
+                  links.push({
+                    url: href,
+                    title: a.innerText?.trim() || a.title || 'بدون عنوان'
+                  });
+                }
+              });
+              return links;
+            });
+            
+            await browser.close();
+            
+            // ذخیره نتایج
+            const result = {
+              sourceUrl: url,
+              timestamp: new Date().toISOString(),
+              networkVideoUrls: Array.from(videoUrls),
+              pageVideoLinks: pageVideoLinks
+            };
+            
+            fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
+            console.log(`Found ${videoUrls.size} video URLs from network`);
+            console.log(`Found ${pageVideoLinks.length} video links from page`);
+            
+          })().catch(err => {
+            console.error('Error:', err.message);
+            process.exit(1);
+          });
+          EOF
+
+      - name: اجرای اسکریپت و استخراج لینک‌ها
+        run: |
+          PAGE_URL="${{ github.event.inputs.page_url }}"
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          FOLDER="video_links/${TIMESTAMP}"
-          mkdir -p "$FOLDER"
+          FOLDER_NAME="videos_list_${TIMESTAMP}"
+          mkdir -p "$FOLDER_NAME"
+          
+          echo "در حال استخراج لینک‌ها از: $PAGE_URL"
+          
+          # اجرای اسکریپت پاپیتیر
+          node extract.js "$PAGE_URL" "$FOLDER_NAME/extracted_links.json"
+          
+          # استخراج لینک‌های فیلم از JSON
+          echo "═══════════════════════════════════════════════════════════" > "$FOLDER_NAME/video_links.txt"
+          echo "لیست لینک‌های فیلم‌ها" >> "$FOLDER_NAME/video_links.txt"
+          echo "آدرس صفحه: $PAGE_URL" >> "$FOLDER_NAME/video_links.txt"
+          echo "تاریخ: $(date)" >> "$FOLDER_NAME/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
+          echo "" >> "$FOLDER_NAME/video_links.txt"
+          
+          # لینک‌های مستقیم ویدیویی (از شبکه)
+          echo "🎬 لینک‌های مستقیم ویدیو:" >> "$FOLDER_NAME/video_links.txt"
+          echo "════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
+          cat "$FOLDER_NAME/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "$FOLDER_NAME/video_links.txt"
+          
+          echo "" >> "$FOLDER_NAME/video_links.txt"
+          echo "" >> "$FOLDER_NAME/video_links.txt"
+          
+          # لینک‌های صفحات فیلم (برای استخراج جداگانه)
+          echo "📄 لینک‌های صفحات فیلم (برای استخراج لینک مستقیم هرکدام):" >> "$FOLDER_NAME/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/video_links.txt"
+          cat "$FOLDER_NAME/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "$FOLDER_NAME/video_links.txt"
+          
+          # ذخیره لینک‌های صفحات فیلم در فایل جداگانه
+          cat "$FOLDER_NAME/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "$FOLDER_NAME/video_pages.txt"
+          
+          # ایجاد فایل README
+          VIDEO_COUNT=$(cat "$FOLDER_NAME/video_pages.txt" 2>/dev/null | wc -l)
+          DIRECT_COUNT=$(cat "$FOLDER_NAME/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
+          
+          cat > "$FOLDER_NAME/README.md" << EOL
+          # نتایج استخراج لینک فیلم
 
-          echo "Extracting info from: $URL"
+          - **آدرس صفحه**: $PAGE_URL
+          - **تاریخ**: $(date)
+          - **تعداد لینک‌های مستقیم ویدیو**: $DIRECT_COUNT
+          - **تعداد لینک‌های صفحات فیلم**: $VIDEO_COUNT
 
-          # دریافت عنوان ویدیو
-          TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null || echo "Unknown Title")
-          echo "Title: $TITLE"
+          ## فایل‌های موجود
 
-          # دریافت لینک مستقیم بهترین کیفیت
-          BEST_URL=$(yt-dlp -f best -g "$URL" 2>/dev/null)
-          if [ -n "$BEST_URL" ]; then
-            echo "Direct Link (Best Quality): $BEST_URL"
-            echo "$BEST_URL" > "$FOLDER/direct_link.txt"
-          else
-            echo "Failed to extract direct link."
-            echo "Extraction Failed" > "$FOLDER/direct_link.txt"
-          fi
+          | فایل | توضیح |
+          |------|-------|
+          | [video_links.txt](./video_links.txt) | لیست کامل لینک‌ها |
+          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم (برای استخراج جداگانه) |
+          | [extracted_links.json](./extracted_links.json) | اطلاعات کامل JSON |
 
-          # ذخیره لاگ اطلاعات
-          {
-            echo "# Extraction Result"
-            echo "**URL:** $URL"
-            echo "**Date:** $(date)"
-            echo "**Title:** $TITLE"
-            echo "## Direct Download Link"
-            echo "\`$BEST_URL\`"
-          } > "$FOLDER/README.md"
+          ## نحوه استفاده
 
-          echo "FOLDER_PATH=$FOLDER" >> $GITHUB_ENV
+          1. برای استخراج لینک مستقیم هر فیلم، لینک آن را در فایل [video_pages.txt](./video_pages.txt) پیدا کنید
+          2. از Action قبلی (استخراج لینک فیلم) برای هر لینک استفاده کنید
 
-      - name: Commit and Push
+          ---
+          تولید شده توسط GitHub Actions
+          EOL
+          
+          echo "FOLDER_NAME=$FOLDER_NAME" >> $GITHUB_ENV
+          
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ نتایج استخراج:"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "تعداد لینک‌های مستقیم ویدیو: $DIRECT_COUNT"
+          echo "تعداد لینک‌های صفحات فیلم: $VIDEO_COUNT"
+          echo ""
+
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add "${{ env.FOLDER_PATH }}"
-          git commit -m "Extract video link from ${{ github.event.inputs.url }}" || echo "No changes"
-          git push || echo "Push failed"
+          git add "${{ env.FOLDER_NAME }}/"
+          git commit -m "استخراج لینک فیلم‌ها از ${{ github.event.inputs.page_url }}" || echo "تغییری وجود ندارد"
+          git push || echo "خطا در ارسال"
+
+      - name: آپلود به عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-list-${{ github.run_id }}
+          path: ${{ env.FOLDER_NAME }}/
