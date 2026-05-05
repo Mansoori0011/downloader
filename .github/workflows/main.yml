@@ -1,0 +1,28 @@
+name: Download APK and Commit to Repository
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Download APK directly from GitHub
+        run: |
+          curl -L -o app-debug.apk "https://github.com/thecybersandeep/Frida-Launcher/releases/download/v2/app-debug.apk"
+      
+      - name: Create ZIP archive
+        run: |
+          zip app-debug.zip app-debug.apk
+      
+      - name: Commit and push the file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app-debug.zip
+          git commit -m "Add Frida Launcher APK as ZIP" || echo "No changes to commit"
+          git push
