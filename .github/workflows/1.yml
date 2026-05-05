@@ -1,0 +1,29 @@
+name: 🌐 4-Browse the Web (Show HTML)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'آدرس سایت'
+        required: true
+        type: string
+
+jobs:
+  browse:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Install curl
+        run: sudo apt-get update && sudo apt-get install -y curl
+      
+      - name: Fetch and display HTML
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          echo "=========================================="
+          echo "محتویات سایت: $URL"
+          echo "=========================================="
+          echo ""
+          curl -s -L "$URL" | head -1000
+          echo ""
+          echo "=========================================="
+          echo "پایان محتوا"
