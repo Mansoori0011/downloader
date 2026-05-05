@@ -1,10 +1,10 @@
-name: استخراج لینک فیلم و اسکرین‌شات
+name: Extract Video Link (PornTube Style)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت مورد نظر'
+        description: 'لینک ویدیو (مثلاً .../view_video.php?viewkey=xxxxx)'
         required: true
         type: string
 
@@ -15,188 +15,52 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: نصب ابزارهای مورد نیاز
+      - name: Install yt-dlp
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl zip python3-pip
+          sudo apt-get install -y python3-pip
           pip3 install yt-dlp
-          npm init -y
-          npm install puppeteer
 
-      - name: ساخت اسکریپت اسکرین‌شات
+      - name: Extract Direct Links
         run: |
-          cat > screenshot.js << 'ENDOFSCRIPT'
-          const puppeteer = require('puppeteer');
-          const url = process.argv[2];
-          const outputPath = process.argv[3];
+          URL="${{ github.event.inputs.url }}"
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          FOLDER="video_links/${TIMESTAMP}"
+          mkdir -p "$FOLDER"
 
-          (async () => {
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-            });
-            const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 720 });
-            
-            try {
-              await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-              await page.screenshot({ path: outputPath, fullPage: true });
-              console.log('Screenshot saved successfully');
-            } catch (err) {
-              console.error('Screenshot error:', err.message);
-            } finally {
-              await browser.close();
-            }
-          })();
-          ENDOFSCRIPT
+          echo "Extracting info from: $URL"
 
-      - name: بازدید از سایت و استخراج لینک فیلم
-        run: |
-          RAW_URL="${{ github.event.inputs.url }}"
-          
-          # نرمال کردن آدرس
-          if [[ ! "$RAW_URL" =~ ^https?:// ]]; then
-            URL="https://$RAW_URL"
-          else
-            URL="$RAW_URL"
-          fi
-          
-          echo "در حال بازدید از: $URL"
-          
-          # استخراج دامنه
-          DOMAIN=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
-          SLUG=$(echo "$URL" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c1-100)
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          FOLDER="pages/$DOMAIN/$SLUG/$TIMESTAMP"
-          MEDIA_FOLDER="$FOLDER/media"
-          mkdir -p "$FOLDER" "$MEDIA_FOLDER"
+          # دریافت عنوان ویدیو
+          TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null || echo "Unknown Title")
+          echo "Title: $TITLE"
 
-          # دانلود HTML صفحه
-          echo "دانلود HTML صفحه..."
-          curl -L -A "Mozilla/5.0" -o "$FOLDER/page.html" "$URL"
-
-          # گرفتن اسکرین‌شات
-          echo "گرفتن اسکرین‌شات..."
-          node screenshot.js "$URL" "$FOLDER/screenshot.png" && SCREENSHOT_OK=true || SCREENSHOT_OK=false
-
-          # ========== استخراج لینک فیلم با yt-dlp ==========
-          echo "استخراج لینک فیلم با yt-dlp..."
-          
-          echo "## Video Links" > "$FOLDER/video_links.md"
-          echo "" >> "$FOLDER/video_links.md"
-          
-          # لینک مستقیم بهترین کیفیت
-          BEST_URL=$(yt-dlp -f best -g "$URL" 2>/dev/null | head -1)
+          # دریافت لینک مستقیم بهترین کیفیت
+          BEST_URL=$(yt-dlp -f best -g "$URL" 2>/dev/null)
           if [ -n "$BEST_URL" ]; then
-            echo "### لینک مستقیم (بهترین کیفیت)" >> "$FOLDER/video_links.md"
-            echo "\`$BEST_URL\`" >> "$FOLDER/video_links.md"
-            echo "" >> "$FOLDER/video_links.md"
+            echo "Direct Link (Best Quality): $BEST_URL"
             echo "$BEST_URL" > "$FOLDER/direct_link.txt"
+          else
+            echo "Failed to extract direct link."
+            echo "Extraction Failed" > "$FOLDER/direct_link.txt"
           fi
-          
-          # عنوان فیلم
-          TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null)
-          if [ -n "$TITLE" ]; then
-            echo "### عنوان فیلم" >> "$FOLDER/video_links.md"
-            echo "$TITLE" >> "$FOLDER/video_links.md"
-            echo "" >> "$FOLDER/video_links.md"
-          fi
-          
-          # همه لینک‌های قابل دانلود
-          echo "### همه لینک‌های قابل دانلود" >> "$FOLDER/video_links.md"
-          echo "\`\`\`" >> "$FOLDER/video_links.md"
-          yt-dlp -g "$URL" 2>/dev/null >> "$FOLDER/video_links.md"
-          echo "\`\`\`" >> "$FOLDER/video_links.md"
-          
-          # اطلاعات JSON
-          yt-dlp --dump-json "$URL" 2>/dev/null > "$FOLDER/video_info.json"
-          
-          # ========== استخراج لینک از HTML (روش دوم) ==========
-          echo "جستجوی لینک در HTML..."
-          grep -oE 'https?://[^"'\''<>]+\.(mp4|m3u8|mkv|avi|mov|flv|webm|ts)[^"'\''<>]*' "$FOLDER/page.html" | sort -u > "$FOLDER/html_video_links.txt"
-          
-          # ========== ذخیره همه لینک‌ها ==========
-          # لیست کامل لینک‌ها
-          grep -oP 'href="\K[^"]*' "$FOLDER/page.html" 2>/dev/null | sort -u > "$FOLDER/all_links.txt"
-          grep -oP 'src="\K[^"]*' "$FOLDER/page.html" 2>/dev/null | sort -u >> "$FOLDER/all_links.txt"
-          sort -u "$FOLDER/all_links.txt" -o "$FOLDER/all_links.txt" 2>/dev/null || true
-          
-          # ========== ایجاد فایل index.md ==========
-          VIDEO_COUNT=$(cat "$FOLDER/video_links.md" | grep -c "http" || echo "0")
+
+          # ذخیره لاگ اطلاعات
           {
-            echo "# بازدید شده: $URL"
-            echo "**زمان:** $(date)"
-            echo ""
-            if [ "$SCREENSHOT_OK" = true ] && [ -f "$FOLDER/screenshot.png" ]; then
-              echo "## اسکرین‌شات"
-              echo "![Screenshot](./screenshot.png)"
-              echo ""
-            fi
-            echo "## لینک‌های فیلم"
-            echo "[مشاهده لینک‌های فیلم](./video_links.md)"
-            echo ""
-            echo "## HTML صفحه"
-            echo "[page.html](./page.html)"
-            echo ""
-            echo "## فایل‌های ذخیره شده"
-            echo "- [لینک مستقیم فیلم](./direct_link.txt) (در صورت وجود)"
-            echo "- [اطلاعات JSON فیلم](./video_info.json)"
-            echo "- [لینک‌های فیلم از HTML](./html_video_links.txt)"
-            echo ""
-          } > "$FOLDER/index.md"
-          
-          # اضافه کردن لینک به browse.md
-          BROWSE_FILE="browse.md"
-          if [ ! -f "$BROWSE_FILE" ]; then
-            echo "# سوابق بازدید شده" > "$BROWSE_FILE"
-            echo "" >> "$BROWSE_FILE"
-          fi
-          echo "- [$URL]($FOLDER/index.md) — $(date +%Y-%m-%d) — [لینک فیلم]($FOLDER/video_links.md)" >> "$BROWSE_FILE"
-          
+            echo "# Extraction Result"
+            echo "**URL:** $URL"
+            echo "**Date:** $(date)"
+            echo "**Title:** $TITLE"
+            echo "## Direct Download Link"
+            echo "\`$BEST_URL\`"
+          } > "$FOLDER/README.md"
+
           echo "FOLDER_PATH=$FOLDER" >> $GITHUB_ENV
-          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
-          echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
-          echo "SLUG=$SLUG" >> $GITHUB_ENV
-          
-          echo "✅ انجام شد!"
 
-      - name: نمایش نتایج
-        run: |
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "نتایج استخراج لینک فیلم:"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
-          if [ -f "$FOLDER_PATH/direct_link.txt" ]; then
-            echo "🎬 لینک مستقیم فیلم:"
-            cat "$FOLDER_PATH/direct_link.txt"
-            echo ""
-          fi
-          if [ -f "$FOLDER_PATH/html_video_links.txt" ] && [ -s "$FOLDER_PATH/html_video_links.txt" ]; then
-            echo "📥 لینک‌های فیلم از HTML:"
-            cat "$FOLDER_PATH/html_video_links.txt"
-            echo ""
-          fi
-
-      - name: فشرده‌سازی پوشه
-        run: |
-          cd pages/$DOMAIN/$SLUG
-          zip -r "$TIMESTAMP.zip" "$TIMESTAMP"
-          cd ../../../..
-
-      - name: ذخیره در مخزن
+      - name: Commit and Push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add pages/ browse.md
-          git add "pages/$DOMAIN/$SLUG/$TIMESTAMP.zip" 2>/dev/null || true
-          if git diff --staged --quiet; then
-            echo "تغییری برای ذخیره وجود ندارد"
-            exit 0
-          fi
-          git commit -m "استخراج لینک فیلم از ${{ github.event.inputs.url }} [skip ci]"
-          git pull --rebase
-          git push
+          git add "${{ env.FOLDER_PATH }}"
+          git commit -m "Extract video link from ${{ github.event.inputs.url }}" || echo "No changes"
+          git push || echo "Push failed"
