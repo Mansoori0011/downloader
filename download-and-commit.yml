@@ -13,7 +13,7 @@ jobs:
       
       - name: Download APK directly from GitHub
         run: |
-          curl -L -o app-debug.apk "https://github.com/thecybersandeep/Frida-Launcher/releases/download/v2/app-debug.apk"
+          curl -L -o frida-server-17.9.6-android-arm64.xz "https://github.com/frida/frida/releases/download/17.9.6/frida-server-17.9.6-android-arm64.xz"
       
       - name: Create ZIP archive
         run: |
