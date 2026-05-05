@@ -1,52 +1,157 @@
-name: 🌐 Extract Video Links with Curl
+name: 🌐 Extract Video Links from Website
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت'
+        description: 'آدرس سایت مورد نظر'
         required: true
         type: string
+        default: 'https://www.aparat.com'
+      selector:
+        description: 'سلکتور CSS برای پیدا کردن فیلم‌ها (مثال: video, iframe, .video-link, a[href*=".mp4"])'
+        required: false
+        type: string
+        default: 'video, iframe, a[href*=".mp4"], a[href*=".m3u8"], [data-src*=".mp4"]'
 
 jobs:
-  extract:
+  extract-videos:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Fetch and extract links
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Playwright
+        run: |
+          npm install -D playwright
+          npx playwright install chromium
+      
+      - name: Extract video links
         run: |
           URL="${{ github.event.inputs.url }}"
-          echo "در حال دریافت محتوا از: $URL"
+          SELECTOR="${{ github.event.inputs.selector }}"
           
-          # دانلود HTML
-          curl -s -L "$URL" -o page.html
+          node -e "
+          const { chromium } = require('playwright');
           
-          # استخراج لینک‌های ویدیویی (mp4, m3u8, mkv, avi)
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+            
+            console.log('در حال باز کردن سایت:', '$URL');
+            await page.goto('$URL', { waitUntil: 'networkidle', timeout: 30000 });
+            
+            // اسکرول به پایین برای لود شدن همه محتوا
+            await page.evaluate(async () => {
+              await new Promise((resolve) => {
+                let totalHeight = 0;
+                const distance = 500;
+                const timer = setInterval(() => {
+                  const scrollHeight = document.body.scrollHeight;
+                  window.scrollBy(0, distance);
+                  totalHeight += distance;
+                  if (totalHeight >= scrollHeight) {
+                    clearInterval(timer);
+                    resolve();
+                  }
+                }, 500);
+              });
+            });
+            
+            // منتظر لود شدن ویدیوها
+            await page.waitForTimeout(3000);
+            
+            // پیدا کردن همه المنت‌های ویدیو
+            const videos = await page.$$eval('$SELECTOR', (elements) => {
+              const results = [];
+              elements.forEach((el, index) => {
+                const tagName = el.tagName.toLowerCase();
+                let videoUrl = null;
+                let title = null;
+                
+                // استخراج لینک از تگ‌های مختلف
+                if (tagName === 'video') {
+                  videoUrl = el.src || el.getAttribute('src');
+                  title = el.getAttribute('title') || el.getAttribute('alt') || 'ویدیو ' + (index + 1);
+                } else if (tagName === 'iframe') {
+                  videoUrl = el.src;
+                  title = el.getAttribute('title') || 'iframe ' + (index + 1);
+                } else if (tagName === 'a') {
+                  videoUrl = el.href;
+                  title = el.innerText || el.getAttribute('title') || 'لینک ' + (index + 1);
+                } else {
+                  videoUrl = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('href');
+                  title = el.getAttribute('title') || el.innerText || 'المنت ' + (index + 1);
+                }
+                
+                if (videoUrl && !videoUrl.startsWith('javascript:')) {
+                  results.push({ title: title.trim(), url: videoUrl });
+                }
+              });
+              return results;
+            });
+            
+            console.log('\\n========================================');
+            console.log('تعداد فیلم‌های پیدا شده:', videos.length);
+            console.log('========================================\\n');
+            
+            if (videos.length === 0) {
+              console.log('هیچ ویدیویی پیدا نشد!');
+              console.log('نکته: ممکن است سلکتور اشتباه باشد.');
+              console.log('سلکتور فعلی:', '$SELECTOR');
+            } else {
+              videos.forEach((video, i) => {
+                console.log('[' + (i+1) + '] عنوان:', video.title);
+                console.log('    لینک:', video.url);
+                console.log('---');
+              });
+            }
+            
+            // ذخیره در فایل
+            const fs = require('fs');
+            fs.writeFileSync('video-links.json', JSON.stringify(videos, null, 2));
+            fs.writeFileSync('video-links.txt', videos.map(v => v.title + '\\n' + v.url + '\\n---\\n').join(''));
+            
+            await browser.close();
+          })().catch(err => {
+            console.error('خطا:', err.message);
+            process.exit(1);
+          });
+          "
+      
+      - name: Display video links
+        run: |
           echo ""
           echo "╔══════════════════════════════════════════════════════════╗"
           echo "║                    لینک‌های فیلم‌ها                       ║"
           echo "╚══════════════════════════════════════════════════════════╝"
           echo ""
-          
-          grep -oE 'https?://[^"'\''<>]+\.(mp4|m3u8|mkv|avi|mov|wmv|flv|webm)[^"'\''<>]*' page.html | sort -u
+          cat video-links.txt || echo "هیچ لینکی پیدا نشد"
           echo ""
-          echo "---"
-          grep -oE 'src="[^"]*\.(mp4|m3u8|mkv)"' page.html | sed 's/src="//' | sed 's/"//'
-          echo ""
-          grep -oE 'data-src="[^"]*\.(mp4|m3u8)"' page.html | sed 's/data-src="//' | sed 's/"//'
-          echo ""
-          grep -oE 'href="[^"]*\.(mp4|m3u8|mkv)"' page.html | sed 's/href="//' | sed 's/"//'
-          
-          # ذخیره در فایل
-          grep -oE 'https?://[^"'\''<>]+\.(mp4|m3u8|mkv|avi|mov|wmv|flv|webm)[^"'\''<>]*' page.html | sort -u > video-links.txt
-          
-          echo ""
-          echo "============================================================"
-          echo "تعداد لینک‌های پیدا شده: $(wc -l < video-links.txt)"
-          echo "فایل video-links.txt ذخیره شد"
       
-      - name: Upload links
+      - name: Save links to repository
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          cp video-links.json "video-links_${TIMESTAMP}.json"
+          cp video-links.txt "video-links_${TIMESTAMP}.txt"
+          git add "video-links_${TIMESTAMP}.json" "video-links_${TIMESTAMP}.txt" || true
+          git commit -m "Extract video links from ${{ github.event.inputs.url }}" || echo "No changes"
+          git push || echo "Push failed"
+      
+      - name: Upload links as artifact
         uses: actions/upload-artifact@v4
         with:
           name: video-links
-          path: video-links.txt
+          path: |
+            video-links.json
+            video-links.txt
+            video-links_*.json
+            video-links_*.txt
