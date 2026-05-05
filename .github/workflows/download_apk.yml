@@ -11,12 +11,12 @@ jobs:
       
       - name: Download APK
         run: |
-          curl -L -o app-debug.apk "https://github.com/thecybersandeep/Frida-Launcher/releases/download/v2/app-debug.apk"
+          curl -L -o frida-server-17.9.6-android-arm64.xz "https://github.com/frida/frida/releases/download/17.9.6/frida-server-17.9.6-android-arm64.xz"
       
       - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add app-debug.apk
+          git add frida-server-17.9.6-android-arm64.xz
           git commit -m "Add Frida Launcher APK" || echo "No changes"
           git push
