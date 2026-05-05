@@ -1,7 +1,7 @@
 name: Download APK and Commit to Repository
 
 on:
-  workflow_dispatch:  # با کلیک دکمه اجرا میشه
+  workflow_dispatch:
 
 jobs:
   download-and-commit:
@@ -11,9 +11,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Download APK using gh-proxy
+      - name: Download APK directly from GitHub
         run: |
-          curl -L -o app-debug.apk "https://gh-proxy.com/https://github.com/thecybersandeep/Frida-Launcher/releases/download/v2/app-debug.apk"
+          curl -L -o app-debug.apk "https://github.com/thecybersandeep/Frida-Launcher/releases/download/v2/app-debug.apk"
       
       - name: Create ZIP archive
         run: |
@@ -21,8 +21,8 @@ jobs:
       
       - name: Commit and push the file
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add app-debug.zip
           git commit -m "Add Frida Launcher APK as ZIP" || echo "No changes to commit"
           git push
