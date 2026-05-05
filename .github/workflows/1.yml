@@ -12,10 +12,12 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
-    
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # اجبار به استفاده از Node.js 24
+
     steps:
       - name: دریافت کد مخزن
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       
       - name: نصب ابزارهای مورد نیاز
         run: |
@@ -29,7 +31,6 @@ jobs:
           DATE_TIME=$(date +'%Y%m%d_%H%M%S')
           FOLDER_NAME="video_links_${DATE_TIME}"
           
-          # ساخت پوشه
           mkdir -p "$FOLDER_NAME"
           
           echo "═══════════════════════════════════════════════════════════"
@@ -37,11 +38,9 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
           echo ""
           
-          # فایل خروجی
           OUTPUT_FILE="$FOLDER_NAME/video_links.txt"
           JSON_FILE="$FOLDER_NAME/video_info.json"
           
-          # هدر فایل
           echo "═══════════════════════════════════════════════════════════" > "$OUTPUT_FILE"
           echo "لینک‌های ویدیویی استخراج شده" >> "$OUTPUT_FILE"
           echo "آدرس سایت: $SITE_URL" >> "$OUTPUT_FILE"
@@ -49,10 +48,10 @@ jobs:
           echo "═══════════════════════════════════════════════════════════" >> "$OUTPUT_FILE"
           echo "" >> "$OUTPUT_FILE"
           
-          # روش 1: استفاده از yt-dlp برای استخراج لینک
-          echo "✅ در حال استخراج با yt-dlp..."
+          # روش 1: استفاده از yt-dlp
+          echo "✅ در حال استخراج با yt-dlp..." >> "$OUTPUT_FILE"
+          echo "" >> "$OUTPUT_FILE"
           
-          # دریافت لینک مستقیم بهترین کیفیت
           BEST_URL=$(yt-dlp -f best -g "$SITE_URL" 2>/dev/null | head -1)
           if [ -n "$BEST_URL" ]; then
             echo "🎬 لینک مستقیم (بهترین کیفیت):" >> "$OUTPUT_FILE"
@@ -61,50 +60,40 @@ jobs:
             echo "$BEST_URL" > "$FOLDER_NAME/direct_link.txt"
           fi
           
-          # دریافت عنوان ویدیو
           TITLE=$(yt-dlp --get-title "$SITE_URL" 2>/dev/null)
           if [ -n "$TITLE" ]; then
             echo "📌 عنوان ویدیو: $TITLE" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
           fi
           
-          # دریافت همه لینک‌های قابل دانلود
           echo "📥 همه لینک‌های قابل دانلود:" >> "$OUTPUT_FILE"
           yt-dlp -g "$SITE_URL" 2>/dev/null >> "$OUTPUT_FILE"
           
-          # دریافت اطلاعات کامل JSON
           yt-dlp --dump-json "$SITE_URL" 2>/dev/null > "$JSON_FILE"
           
-          # روش 2: اگر yt-dlp جواب نداد، از curl استفاده کن
+          # روش 2: اگر yt-dlp جواب نداد
           if [ ! -s "$FOLDER_NAME/direct_link.txt" ]; then
-            echo ""
-            echo "⚠️ yt-dlp موفق نبود، تلاش با روش جایگزین..."
-            echo ""
+            echo "" >> "$OUTPUT_FILE"
+            echo "⚠️ yt-dlp موفق نبود، تلاش با روش جایگزین..." >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
             echo "🔍 روش جایگزین (جستجو در صفحه):" >> "$OUTPUT_FILE"
             echo "" >> "$OUTPUT_FILE"
             
-            # دانلود HTML صفحه
             curl -s -L "$SITE_URL" -o "$FOLDER_NAME/page.html"
             
-            # جستجوی لینک‌های ویدیویی
             grep -oE 'https?://[^"'"'"'<>]+\.(mp4|m3u8|mkv|avi|mov|flv|webm|ts)[^"'"'"'<>]*' "$FOLDER_NAME/page.html" | sort -u >> "$OUTPUT_FILE"
-            
-            # جستجوی لینک‌های داخل تگ‌ها
-            grep -oP '(?:src|href|data-src|data-video-url)="\K[^"]+(?:\.mp4|\.m3u8|\.mkv|\.flv|video)' "$FOLDER_NAME/page.html" 2>/dev/null >> "$OUTPUT_FILE"
           fi
           
           echo "" >> "$OUTPUT_FILE"
           echo "═══════════════════════════════════════════════════════════" >> "$OUTPUT_FILE"
           echo "پایان" >> "$OUTPUT_FILE"
           
-          # نمایش نتیجه در لاگ
           echo ""
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ نتیجه استخراج:"
           echo "═══════════════════════════════════════════════════════════"
           cat "$OUTPUT_FILE"
           
-          # ذخیره نام پوشه برای مرحله بعد
           echo "FOLDER_NAME=$FOLDER_NAME" >> $GITHUB_ENV
       
       - name: ذخیره در مخزن گیت‌هاب
@@ -116,7 +105,7 @@ jobs:
           git push || echo "خطا در ارسال"
       
       - name: آپلود به عنوان Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: video-links-${{ github.run_id }}
           path: ${{ env.FOLDER_NAME }}/
