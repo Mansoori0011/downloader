@@ -1,4 +1,4 @@
-name: 🌐 4-Browse the Web (Show HTML)
+name: 🌐 Extract Video Links with Curl
 
 on:
   workflow_dispatch:
@@ -9,21 +9,44 @@ on:
         type: string
 
 jobs:
-  browse:
+  extract:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Install curl
-        run: sudo apt-get update && sudo apt-get install -y curl
-      
-      - name: Fetch and display HTML
+      - name: Fetch and extract links
         run: |
           URL="${{ github.event.inputs.url }}"
-          echo "=========================================="
-          echo "محتویات سایت: $URL"
-          echo "=========================================="
+          echo "در حال دریافت محتوا از: $URL"
+          
+          # دانلود HTML
+          curl -s -L "$URL" -o page.html
+          
+          # استخراج لینک‌های ویدیویی (mp4, m3u8, mkv, avi)
           echo ""
-          curl -s -L "$URL" | head -1000
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║                    لینک‌های فیلم‌ها                       ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
           echo ""
-          echo "=========================================="
-          echo "پایان محتوا"
+          
+          grep -oE 'https?://[^"'\''<>]+\.(mp4|m3u8|mkv|avi|mov|wmv|flv|webm)[^"'\''<>]*' page.html | sort -u
+          echo ""
+          echo "---"
+          grep -oE 'src="[^"]*\.(mp4|m3u8|mkv)"' page.html | sed 's/src="//' | sed 's/"//'
+          echo ""
+          grep -oE 'data-src="[^"]*\.(mp4|m3u8)"' page.html | sed 's/data-src="//' | sed 's/"//'
+          echo ""
+          grep -oE 'href="[^"]*\.(mp4|m3u8|mkv)"' page.html | sed 's/href="//' | sed 's/"//'
+          
+          # ذخیره در فایل
+          grep -oE 'https?://[^"'\''<>]+\.(mp4|m3u8|mkv|avi|mov|wmv|flv|webm)[^"'\''<>]*' page.html | sort -u > video-links.txt
+          
+          echo ""
+          echo "============================================================"
+          echo "تعداد لینک‌های پیدا شده: $(wc -l < video-links.txt)"
+          echo "فایل video-links.txt ذخیره شد"
+      
+      - name: Upload links
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-links
+          path: video-links.txt
