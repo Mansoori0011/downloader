@@ -1,157 +1,47 @@
-name: 🌐 Extract Video Links from Website
+name: 🌐 Extract Video Links with yt-dlp
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت مورد نظر'
+        description: 'آدرس صفحه یا لیست پخش'
         required: true
         type: string
-        default: 'https://www.aparat.com'
-      selector:
-        description: 'سلکتور CSS برای پیدا کردن فیلم‌ها (مثال: video, iframe, .video-link, a[href*=".mp4"])'
-        required: false
-        type: string
-        default: 'video, iframe, a[href*=".mp4"], a[href*=".m3u8"], [data-src*=".mp4"]'
 
 jobs:
-  extract-videos:
+  extract:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
-      - name: Install Playwright
+      - name: Install yt-dlp
         run: |
-          npm install -D playwright
-          npx playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y python3-pip
+          pip3 install yt-dlp
       
-      - name: Extract video links
+      - name: Extract video info
         run: |
           URL="${{ github.event.inputs.url }}"
-          SELECTOR="${{ github.event.inputs.selector }}"
+          echo "در حال استخراج اطلاعات از: $URL"
           
-          node -e "
-          const { chromium } = require('playwright');
+          # دریافت لینک‌های ویدیو
+          yt-dlp --get-url "$URL" 2>/dev/null | tee direct-urls.txt
           
-          (async () => {
-            const browser = await chromium.launch({ headless: true });
-            const page = await browser.newPage();
-            
-            console.log('در حال باز کردن سایت:', '$URL');
-            await page.goto('$URL', { waitUntil: 'networkidle', timeout: 30000 });
-            
-            // اسکرول به پایین برای لود شدن همه محتوا
-            await page.evaluate(async () => {
-              await new Promise((resolve) => {
-                let totalHeight = 0;
-                const distance = 500;
-                const timer = setInterval(() => {
-                  const scrollHeight = document.body.scrollHeight;
-                  window.scrollBy(0, distance);
-                  totalHeight += distance;
-                  if (totalHeight >= scrollHeight) {
-                    clearInterval(timer);
-                    resolve();
-                  }
-                }, 500);
-              });
-            });
-            
-            // منتظر لود شدن ویدیوها
-            await page.waitForTimeout(3000);
-            
-            // پیدا کردن همه المنت‌های ویدیو
-            const videos = await page.$$eval('$SELECTOR', (elements) => {
-              const results = [];
-              elements.forEach((el, index) => {
-                const tagName = el.tagName.toLowerCase();
-                let videoUrl = null;
-                let title = null;
-                
-                // استخراج لینک از تگ‌های مختلف
-                if (tagName === 'video') {
-                  videoUrl = el.src || el.getAttribute('src');
-                  title = el.getAttribute('title') || el.getAttribute('alt') || 'ویدیو ' + (index + 1);
-                } else if (tagName === 'iframe') {
-                  videoUrl = el.src;
-                  title = el.getAttribute('title') || 'iframe ' + (index + 1);
-                } else if (tagName === 'a') {
-                  videoUrl = el.href;
-                  title = el.innerText || el.getAttribute('title') || 'لینک ' + (index + 1);
-                } else {
-                  videoUrl = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('href');
-                  title = el.getAttribute('title') || el.innerText || 'المنت ' + (index + 1);
-                }
-                
-                if (videoUrl && !videoUrl.startsWith('javascript:')) {
-                  results.push({ title: title.trim(), url: videoUrl });
-                }
-              });
-              return results;
-            });
-            
-            console.log('\\n========================================');
-            console.log('تعداد فیلم‌های پیدا شده:', videos.length);
-            console.log('========================================\\n');
-            
-            if (videos.length === 0) {
-              console.log('هیچ ویدیویی پیدا نشد!');
-              console.log('نکته: ممکن است سلکتور اشتباه باشد.');
-              console.log('سلکتور فعلی:', '$SELECTOR');
-            } else {
-              videos.forEach((video, i) => {
-                console.log('[' + (i+1) + '] عنوان:', video.title);
-                console.log('    لینک:', video.url);
-                console.log('---');
-              });
-            }
-            
-            // ذخیره در فایل
-            const fs = require('fs');
-            fs.writeFileSync('video-links.json', JSON.stringify(videos, null, 2));
-            fs.writeFileSync('video-links.txt', videos.map(v => v.title + '\\n' + v.url + '\\n---\\n').join(''));
-            
-            await browser.close();
-          })().catch(err => {
-            console.error('خطا:', err.message);
-            process.exit(1);
-          });
-          "
-      
-      - name: Display video links
-        run: |
           echo ""
-          echo "╔══════════════════════════════════════════════════════════╗"
-          echo "║                    لینک‌های فیلم‌ها                       ║"
-          echo "╚══════════════════════════════════════════════════════════╝"
-          echo ""
-          cat video-links.txt || echo "هیچ لینکی پیدا نشد"
-          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "اطلاعات کامل ویدیوها:"
+          echo "═══════════════════════════════════════════════════════════"
+          yt-dlp --dump-json --flat-playlist "$URL" 2>/dev/null | jq -r '.title + " | " + .url' > video-list.txt
+          cat video-list.txt
+          
+          # ذخیره لینک‌های مستقیم دانلود (بهترین کیفیت)
+          yt-dlp -f best -g "$URL" 2>/dev/null | tee best-quality-urls.txt
       
-      - name: Save links to repository
-        run: |
-          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          cp video-links.json "video-links_${TIMESTAMP}.json"
-          cp video-links.txt "video-links_${TIMESTAMP}.txt"
-          git add "video-links_${TIMESTAMP}.json" "video-links_${TIMESTAMP}.txt" || true
-          git commit -m "Extract video links from ${{ github.event.inputs.url }}" || echo "No changes"
-          git push || echo "Push failed"
-      
-      - name: Upload links as artifact
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: video-links
+          name: video-info
           path: |
-            video-links.json
-            video-links.txt
-            video-links_*.json
-            video-links_*.txt
+            direct-urls.txt
+            best-quality-urls.txt
+            video-list.txt
