@@ -1,129 +1,131 @@
-name: 🌐 Extract Video Links from Website
+name: استخراج لینک ویدیو از سایت
 
 on:
   workflow_dispatch:
     inputs:
-      url:
+      site_url:
         description: 'آدرس سایت مورد نظر'
         required: true
         type: string
-        default: 'https://www.example.com/view_video.php?viewkey=xxxxx'
+        default: 'https://example.com'
 
 jobs:
-  extract-videos:
+  extract:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
+      - name: دریافت کد مخزن
         uses: actions/checkout@v4
       
-      - name: Install yt-dlp and dependencies
+      - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ffmpeg
-          pip3 install --upgrade yt-dlp
+          sudo apt-get install -y python3-pip
+          pip3 install yt-dlp
       
-      - name: Extract video information
+      - name: استخراج لینک ویدیوها
         run: |
-          URL="${{ github.event.inputs.url }}"
-          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          FOLDER_NAME="extracted_${TIMESTAMP}"
+          SITE_URL="${{ github.event.inputs.site_url }}"
+          DATE_TIME=$(date +'%Y%m%d_%H%M%S')
+          FOLDER_NAME="video_links_${DATE_TIME}"
           
-          mkdir -p "$FOLDER_NAME/links"
-          mkdir -p "$FOLDER_NAME/videos"
+          # ساخت پوشه
+          mkdir -p "$FOLDER_NAME"
           
-          echo "در حال استخراج اطلاعات از: $URL"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "در حال استخراج لینک از: $SITE_URL"
+          echo "═══════════════════════════════════════════════════════════"
           echo ""
           
-          # ذخیره اطلاعات کامل به صورت JSON
-          yt-dlp --dump-json "$URL" > "$FOLDER_NAME/links/video-info.json" 2>/dev/null || echo "{}" > "$FOLDER_NAME/links/video-info.json"
+          # فایل خروجی
+          OUTPUT_FILE="$FOLDER_NAME/video_links.txt"
+          JSON_FILE="$FOLDER_NAME/video_info.json"
           
-          # استخراج لینک مستقیم ویدیو (بهترین کیفیت)
-          echo "═══════════════════════════════════════════════════════════" > "$FOLDER_NAME/links/video-links.txt"
-          echo "لینک‌های ویدیویی استخراج شده" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "آدرس: $URL" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "تاریخ: $(date)" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "" >> "$FOLDER_NAME/links/video-links.txt"
+          # هدر فایل
+          echo "═══════════════════════════════════════════════════════════" > "$OUTPUT_FILE"
+          echo "لینک‌های ویدیویی استخراج شده" >> "$OUTPUT_FILE"
+          echo "آدرس سایت: $SITE_URL" >> "$OUTPUT_FILE"
+          echo "تاریخ: $(date)" >> "$OUTPUT_FILE"
+          echo "═══════════════════════════════════════════════════════════" >> "$OUTPUT_FILE"
+          echo "" >> "$OUTPUT_FILE"
           
-          # دریافت عنوان ویدیو
-          TITLE=$(yt-dlp --get-title "$URL" 2>/dev/null || echo "عنوان نامشخص")
-          echo "عنوان ویدیو: $TITLE" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "" >> "$FOLDER_NAME/links/video-links.txt"
+          # روش 1: استفاده از yt-dlp برای استخراج لینک
+          echo "✅ در حال استخراج با yt-dlp..."
           
-          # دریافت لینک‌های مستقیم با کیفیت‌های مختلف
-          echo "لینک‌های مستقیم دانلود:" >> "$FOLDER_NAME/links/video-links.txt"
-          yt-dlp -f best -g "$URL" 2>/dev/null > "$FOLDER_NAME/videos/best-quality-url.txt"
-          
-          # دریافت همه لینک‌های قابل دانلود
-          yt-dlp -g "$URL" 2>/dev/null > "$FOLDER_NAME/videos/all-urls.txt"
-          
-          if [ -s "$FOLDER_NAME/videos/best-quality-url.txt" ]; then
-            echo "بهترین کیفیت: $(cat "$FOLDER_NAME/videos/best-quality-url.txt")" >> "$FOLDER_NAME/links/video-links.txt"
-          else
-            echo "امکان استخراج لینک مستقیم وجود ندارد" >> "$FOLDER_NAME/links/video-links.txt"
+          # دریافت لینک مستقیم بهترین کیفیت
+          BEST_URL=$(yt-dlp -f best -g "$SITE_URL" 2>/dev/null | head -1)
+          if [ -n "$BEST_URL" ]; then
+            echo "🎬 لینک مستقیم (بهترین کیفیت):" >> "$OUTPUT_FILE"
+            echo "$BEST_URL" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            echo "$BEST_URL" > "$FOLDER_NAME/direct_link.txt"
           fi
           
-          echo "" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "$FOLDER_NAME/links/video-links.txt"
-          echo "فرمت‌های موجود برای دانلود:" >> "$FOLDER_NAME/links/video-links.txt"
-          yt-dlp -F "$URL" 2>/dev/null >> "$FOLDER_NAME/links/video-links.txt"
+          # دریافت عنوان ویدیو
+          TITLE=$(yt-dlp --get-title "$SITE_URL" 2>/dev/null)
+          if [ -n "$TITLE" ]; then
+            echo "📌 عنوان ویدیو: $TITLE" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+          fi
           
-          # ایجاد README
-          cat > "$FOLDER_NAME/README.md" << EOL
-# نتایج استخراج ویدیو
-
-- **آدرس سایت**: $URL
-- **عنوان ویدیو**: $TITLE
-- **تاریخ**: $(date)
-
-## محتویات پوشه
-
-| فایل | توضیح |
-|------|-------|
-| \`links/video-info.json\` | اطلاعات کامل ویدیو به صورت JSON |
-| \`links/video-links.txt\` | لینک‌های مستقیم و فرمت‌های موجود |
-| \`videos/best-quality-url.txt\` | لینک مستقیم بهترین کیفیت |
-| \`videos/all-urls.txt\` | همه لینک‌های قابل دانلود |
-
-## نحوه دانلود
-
-برای دانلود ویدیو می‌توانید از دستور زیر استفاده کنید:
-
-\`\`\`bash
-yt-dlp -f best "$URL"
-\`\`\`
-
----
-تولید شده توسط GitHub Actions
-EOL
+          # دریافت همه لینک‌های قابل دانلود
+          echo "📥 همه لینک‌های قابل دانلود:" >> "$OUTPUT_FILE"
+          yt-dlp -g "$SITE_URL" 2>/dev/null >> "$OUTPUT_FILE"
           
-          # نمایش نتیجه
+          # دریافت اطلاعات کامل JSON
+          yt-dlp --dump-json "$SITE_URL" 2>/dev/null > "$JSON_FILE"
+          
+          # روش 2: اگر yt-dlp جواب نداد، از curl استفاده کن
+          if [ ! -s "$FOLDER_NAME/direct_link.txt" ]; then
+            echo ""
+            echo "⚠️ yt-dlp موفق نبود، تلاش با روش جایگزین..."
+            echo ""
+            echo "🔍 روش جایگزین (جستجو در صفحه):" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+            
+            # دانلود HTML صفحه
+            curl -s -L "$SITE_URL" -o "$FOLDER_NAME/page.html"
+            
+            # جستجوی لینک‌های ویدیویی
+            grep -oE 'https?://[^"'"'"'<>]+\.(mp4|m3u8|mkv|avi|mov|flv|webm|ts)[^"'"'"'<>]*' "$FOLDER_NAME/page.html" | sort -u >> "$OUTPUT_FILE"
+            
+            # جستجوی لینک‌های داخل تگ‌ها
+            grep -oP '(?:src|href|data-src|data-video-url)="\K[^"]+(?:\.mp4|\.m3u8|\.mkv|\.flv|video)' "$FOLDER_NAME/page.html" 2>/dev/null >> "$OUTPUT_FILE"
+          fi
+          
+          echo "" >> "$OUTPUT_FILE"
+          echo "═══════════════════════════════════════════════════════════" >> "$OUTPUT_FILE"
+          echo "پایان" >> "$OUTPUT_FILE"
+          
+          # نمایش نتیجه در لاگ
           echo ""
-          cat "$FOLDER_NAME/links/video-links.txt"
-          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ نتیجه استخراج:"
+          echo "═══════════════════════════════════════════════════════════"
+          cat "$OUTPUT_FILE"
           
+          # ذخیره نام پوشه برای مرحله بعد
           echo "FOLDER_NAME=$FOLDER_NAME" >> $GITHUB_ENV
       
-      - name: Commit and push to repository
+      - name: ذخیره در مخزن گیت‌هاب
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add "${{ env.FOLDER_NAME }}/"
-          git commit -m "Extract video info from ${{ github.event.inputs.url }}" || echo "No changes"
-          git push origin HEAD:${{ github.ref_name }} || echo "Push failed"
+          git commit -m "استخراج لینک ویدیو از ${{ github.event.inputs.site_url }}" || echo "تغییری وجود ندارد"
+          git push || echo "خطا در ارسال"
       
-      - name: Upload results as artifact
+      - name: آپلود به عنوان Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: extracted-video-info
+          name: video-links-${{ github.run_id }}
           path: ${{ env.FOLDER_NAME }}/
       
-      - name: Show folder location
+      - name: نمایش لینک دسترسی
         run: |
           echo ""
-          echo "========================================"
-          echo "✅ اطلاعات با موفقیت ذخیره شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ فایل‌ها با موفقیت ذخیره شدند!"
           echo "📁 پوشه: ${{ env.FOLDER_NAME }}"
-          echo "🔗 لینک: https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/${{ env.FOLDER_NAME }}"
-          echo "========================================"
+          echo "🔗 لینک: https://github.com/${{ github.repository }}/tree/main/${{ env.FOLDER_NAME }}"
+          echo "═══════════════════════════════════════════════════════════"
