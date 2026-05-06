@@ -17,14 +17,42 @@ jobs:
       - name: نصب yt-dlp
         run: pip3 install yt-dlp
       
-      - name: دانلود فیلم
+      - name: دریافت اطلاعات فیلم و دانلود
         run: |
-          VIDEO_INFO=$(cat output/videos_info.json)
+          if [ ! -f "output/extracted_links.json" ]; then
+            echo "❌ خطا: فایل output/extracted_links.json پیدا نشد"
+            echo "📁 ابتدا فایل اصلی را اجرا کنید"
+            exit 1
+          fi
+          
+          VIDEO_URLS=$(cat output/extracted_links.json | jq -r '.pageVideoLinks[]?.url')
+          TOTAL=$(echo "$VIDEO_URLS" | wc -l)
+          
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "❌ خطا: هیچ فیلمی پیدا نشد"
+            exit 1
+          fi
+          
           V_NUM="${{ github.event.inputs.video_number }}"
-          VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].url")
-          VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].title")
-          echo "در حال دانلود: $VIDEO_TITLE"
+          VIDEO_URL=$(echo "$VIDEO_URLS" | sed -n "${V_NUM}p")
+          VIDEO_TITLE=$(cat output/extracted_links.json | jq -r ".pageVideoLinks[$((V_NUM-1))].title")
+          
+          if [ -z "$VIDEO_URL" ]; then
+            echo "❌ خطا: شماره فیلم نامعتبر است"
+            echo "📋 تعداد کل فیلم‌ها: $TOTAL"
+            echo "🔢 شماره‌های مجاز: 1 تا $TOTAL"
+            exit 1
+          fi
+          
+          echo "═══════════════════════════════════════════════════════════"
+          echo "🎬 در حال دانلود فیلم شماره $V_NUM از $TOTAL"
+          echo "📌 عنوان: ${VIDEO_TITLE:-بدون عنوان}"
+          echo "🔗 لینک: $VIDEO_URL"
+          echo "═══════════════════════════════════════════════════════════"
+          
           yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+          
+          echo "✅ دانلود کامل شد: video_${V_NUM}.mp4"
       
       - name: آپلود فایل
         uses: actions/upload-artifact@v4
