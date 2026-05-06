@@ -30,31 +30,15 @@ jobs:
           mkdir -p web-archive
 
           echo "در حال دانلود صفحه: $URL"
-          
-          # دانلود صفحه با wget
           wget --recursive --page-requisites --convert-links --adjust-extension \
                --no-parent --directory-prefix=web-archive/temp "$URL" 2>/dev/null
 
-          # پیدا کردن فایل HTML اصلی
           MAIN_FILE=$(find web-archive/temp -name "*.html" | head -1)
           
           if [ -f "$MAIN_FILE" ]; then
-            # تبدیل به MHT با استفاده از اسکریپت پایتون جداگانه
-            cat > convert.py << 'EOF'
-import sys
-import mhtml
-
-input_file = sys.argv[1]
-output_file = sys.argv[2]
-
-with open(input_file, 'rb') as f:
-    html_content = f.read()
-
-with open(output_file, 'wb') as f:
-    f.write(mhtml.document(html_content).serialize())
-
-print("✅ تبدیل انجام شد")
-EOF
+            echo "import sys, mhtml" > convert.py
+            echo "with open(sys.argv[1], 'rb') as f: html = f.read()" >> convert.py
+            echo "with open(sys.argv[2], 'wb') as f: f.write(mhtml.document(html).serialize())" >> convert.py
             
             python3 convert.py "$MAIN_FILE" web-archive/archive.mht
             echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
