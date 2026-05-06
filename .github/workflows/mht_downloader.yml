@@ -42,19 +42,34 @@ jobs:
                --no-parent \
                --wait=2 \
                --limit-rate=200K \
-               -r -l 1 "$URL" 2>&1 | tail -10
+               -r -l 1 "$URL" 2>&1 | tail -20
           
           cd ..
           
-          echo "✅ دانلود در پوشه offline-site انجام شد"
+          echo "✅ دانلود انجام شد"
+          echo "فایل‌های موجود در پوشه offline-site:"
+          ls -la offline-site/
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          git add offline-site/
-          git commit -m "دانلود آفلاین از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
-          git push origin master
-          
-          echo "✅ فایل‌ها در مخزن ذخیره شدند"
+          # بررسی وجود فایل
+          if [ -d "offline-site" ] && [ "$(ls -A offline-site)" ]; then
+            echo "✅ پوشه offline-site دارای فایل است"
+            git add offline-site/
+            git status
+            git commit -m "دانلود آفلاین از ${{ github.event.inputs.url }}"
+            git push origin master
+            echo "✅ فایل‌ها با موفقیت push شدند"
+          else
+            echo "❌ پوشه offline-site خالی است یا وجود ندارد"
+            exit 1
+          fi
+
+      - name: آپلود به عنوان Artifact (پشتیبان)
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-site-backup
+          path: offline-site/
