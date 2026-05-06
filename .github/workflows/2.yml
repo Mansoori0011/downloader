@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      workflows: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,28 +92,31 @@ jobs:
           TOTAL_FOUND=$(cat output/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
           echo "تعداد کل فیلم‌های پیدا شده: $TOTAL_FOUND"
           
+          # محدود کردن تعداد فیلم‌ها بر اساس ورودی کاربر
           if [ "$MAX_VIDEOS" -lt "$TOTAL_FOUND" ] 2>/dev/null; then
             SELECTED_COUNT=$MAX_VIDEOS
-            echo "فقط $SELECTED_COUNT فیلم اول پردازش می‌شود"
+            echo "با توجه به درخواست شما، فقط $SELECTED_COUNT فیلم اول پردازش می‌شود"
           else
             SELECTED_COUNT=$TOTAL_FOUND
           fi
           
+          # ذخیره لینک‌های محدود شده
           cat output/extracted_links.json | jq -r ".pageVideoLinks[:$SELECTED_COUNT] | .[] | .url" > output/video_pages.txt
           
           echo "═══════════════════════════════════════════════════════════" > output/video_links.txt
           echo "لیست لینک‌های فیلم" >> output/video_links.txt
           echo "آدرس: $PAGE_URL" >> output/video_links.txt
           echo "تاریخ: $(date)" >> output/video_links.txt
-          echo "تعداد فیلم‌ها: $SELECTED_COUNT" >> output/video_links.txt
+          echo "تعداد فیلم‌های انتخاب شده: $SELECTED_COUNT" >> output/video_links.txt
           echo "═══════════════════════════════════════════════════════════" >> output/video_links.txt
           echo "" >> output/video_links.txt
           
           cat output/extracted_links.json | jq -r ".pageVideoLinks[:$SELECTED_COUNT] | .[] | \"عنوان: \" + .title + \"\nلینک: \" + .url + \"\n---\"" 2>/dev/null >> output/video_links.txt
 
-      - name: دریافت اطلاعات فیلم
+      - name: دریافت اطلاعات فیلم (دریافت جداگانه و پایدار)
         run: |
           cd output
+          
           TOTAL=$(cat video_pages.txt | wc -l)
           echo "در حال دریافت اطلاعات $TOTAL فیلم..."
           
@@ -168,10 +172,11 @@ jobs:
           - [videos_info.json](./videos_info.json)
           EOL
 
-      - name: ایجاد فایل YAML پویا (در پوشه output)
+      - name: ایجاد فایل YAML پویا برای دانلود
         run: |
           TOTAL_VIDEOS=$(cat output/videos_info.json | jq '. | length' 2>/dev/null || echo "0")
-          cat > output/download-video.yml << YEOF
+          mkdir -p .github/workflows
+          cat > .github/workflows/download-video.yml << YEOF
           name: دانلود فیلم انتخابی
           on:
             workflow_dispatch:
@@ -203,24 +208,25 @@ jobs:
                     name: downloaded-video
                     path: video_*.mp4
           YEOF
-          echo "فایل پویا در output/download-video.yml ساخته شد"
+          echo "فایل پویا ساخته شد"
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           
           git fetch origin
           git checkout master || git checkout -b master
           
-          git add output/
+          git add output/ .github/workflows/download-video.yml
           
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
-            git push origin HEAD:master
-            echo "✅ فایل‌ها با موفقیت ذخیره شدند"
+            git push origin HEAD:master --force-with-lease
+            echo "✅ فایل‌ها با موفقیت در شاخه master ذخیره شدند"
           fi
 
       - name: آپلود به عنوان Artifact
@@ -239,5 +245,4 @@ jobs:
           echo "📁 پوشه: output/"
           echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
           echo "📸 اسکرین‌شات: output/screenshots/fullpage.png"
-          echo "📄 فایل پویا: output/download-video.yml"
           echo "═══════════════════════════════════════════════════════════"
