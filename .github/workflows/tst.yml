@@ -1,4 +1,4 @@
-name: دانلود صفحه فیلم با عکس و لینک
+name: دانلود فیلم‌ها با عکس و لینک (قابل تنظیم)
 
 on:
   workflow_dispatch:
@@ -7,9 +7,19 @@ on:
         description: 'آدرس صفحه دارای فیلم'
         required: true
         type: string
+      max_items:
+        description: 'حداکثر تعداد فیلم برای استخراج (پیش‌فرض: 20)'
+        required: false
+        type: string
+        default: '20'
+      download_thumbnails:
+        description: 'آیا عکس فیلم‌ها دانلود شود؟'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
-  download-page:
+  download-movies:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -25,9 +35,11 @@ jobs:
           npm install -g puppeteer
           npm install puppeteer
 
-      - name: دانلود صفحه و استخراج فیلم‌ها با عکس
+      - name: استخراج فیلم‌ها و دانلود عکس‌ها
         run: |
           URL="${{ github.event.inputs.url }}"
+          MAX_ITEMS="${{ github.event.inputs.max_items }}"
+          DOWNLOAD_IMAGES="${{ github.event.inputs.download_thumbnails }}"
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
           OUTPUT_DIR="movies_${TIMESTAMP}"
           mkdir -p "$OUTPUT_DIR/images"
@@ -37,9 +49,10 @@ jobs:
           const fs = require('fs');
           const https = require('https');
           const http = require('http');
+          const path = require('path');
           
           function downloadImage(url, filepath) {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
               const protocol = url.startsWith('https') ? https : http;
               protocol.get(url, (res) => {
                 if (res.statusCode === 200) {
@@ -49,10 +62,8 @@ jobs:
                     file.close();
                     resolve(true);
                   });
-                } else {
-                  resolve(false);
-                }
-              }).on('error', reject);
+                } else { resolve(false); }
+              }).on('error', () => resolve(false));
             });
           }
           
@@ -61,6 +72,8 @@ jobs:
             const outputHtml = process.argv[3];
             const outputJson = process.argv[4];
             const imagesDir = process.argv[5];
+            const maxItems = parseInt(process.argv[6]);
+            const downloadImages = process.argv[7] === 'true';
             
             const browser = await puppeteer.launch({
               headless: 'new',
@@ -69,252 +82,193 @@ jobs:
             const page = await browser.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
             
-            console.log('در حال بارگذاری:', url);
+            console.log('📂 در حال بارگذاری:', url);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             
-            // استخراج فیلم‌ها، لینک‌ها و عکس‌ها
+            // اسکرول برای لود بیشتر
+            for (let i = 0; i < 3; i++) {
+              await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            
+            // استخراج فیلم‌ها
             const movies = await page.evaluate(() => {
               const results = [];
+              const seen = new Set();
               
               // جستجو در لینک‌ها
-              const links = document.querySelectorAll('a');
-              links.forEach(link => {
+              document.querySelectorAll('a').forEach(link => {
                 const href = link.href;
                 const title = link.innerText?.trim() || link.title || '';
                 const img = link.querySelector('img');
-                const imgSrc = img ? (img.src || img.getAttribute('data-src')) : null;
-                
-                if (href && (
-                  href.includes('/video/') || 
-                  href.includes('/watch') || 
-                  href.includes('/v/') ||
-                  href.includes('/view_video.php')
-                )) {
-                  results.push({
-                    title: title.substring(0, 100),
-                    url: href,
-                    thumbnail: imgSrc
-                  });
+                let thumbnail = null;
+                if (img) {
+                  thumbnail = img.src || img.getAttribute('data-src') || img.getAttribute('data-original');
+                }
+                if (!thumbnail) {
+                  const bg = link.querySelector('[style*="background"]');
+                  if (bg) {
+                    const match = bg.style.backgroundImage?.match(/url\(["']?([^"')]+)/);
+                    if (match) thumbnail = match[1];
+                  }
+                }
+                if (href && (href.includes('/video/') || href.includes('/watch') || href.includes('/v/') || href.includes('/view_video.php'))) {
+                  if (!seen.has(href)) {
+                    seen.add(href);
+                    results.push({ title: title.substring(0, 80), url: href, thumbnail: thumbnail });
+                  }
                 }
               });
               
-              // جستجو در کارت‌ها و مقاله‌ها
-              const cards = document.querySelectorAll('.video-card, .movie-item, article, .item, [class*="video"], [class*="movie"]');
-              cards.forEach(card => {
+              // جستجو در کارت‌ها
+              document.querySelectorAll('.video-card, .movie-item, article, .item, [class*="video"], [class*="movie"]').forEach(card => {
                 const link = card.querySelector('a');
                 const img = card.querySelector('img');
                 const titleEl = card.querySelector('h3, h4, .title, [class*="title"]');
-                
                 if (link && link.href && (link.href.includes('/video/') || link.href.includes('/watch'))) {
-                  results.push({
-                    title: titleEl?.innerText?.trim() || link.innerText?.trim() || 'بدون عنوان',
-                    url: link.href,
-                    thumbnail: img ? (img.src || img.getAttribute('data-src')) : null
-                  });
+                  const href = link.href;
+                  if (!seen.has(href)) {
+                    seen.add(href);
+                    let thumbnail = null;
+                    if (img) thumbnail = img.src || img.getAttribute('data-src');
+                    results.push({
+                      title: titleEl?.innerText?.trim() || link.innerText?.trim() || 'بدون عنوان',
+                      url: href,
+                      thumbnail: thumbnail
+                    });
+                  }
                 }
               });
               
-              // حذف تکراری‌ها
-              const unique = [];
-              const seen = new Set();
-              for (const item of results) {
-                if (!seen.has(item.url)) {
-                  seen.add(item.url);
-                  unique.push(item);
-                }
-              }
-              
-              return unique;
+              return results.slice(0, 100);
             });
             
+            // محدود کردن تعداد
+            const limitedMovies = movies.slice(0, maxItems);
+            console.log(`🎬 ${limitedMovies.length} فیلم از ${movies.length} فیلم انتخاب شد`);
+            
             // دانلود عکس‌ها
-            for (let i = 0; i < movies.length; i++) {
-              const movie = movies[i];
-              if (movie.thumbnail && movie.thumbnail.startsWith('http')) {
-                const ext = movie.thumbnail.split('.').pop().split('?')[0];
-                const filename = `img_${i+1}.${ext}`;
+            let downloadedImages = 0;
+            for (let i = 0; i < limitedMovies.length; i++) {
+              const movie = limitedMovies[i];
+              if (downloadImages && movie.thumbnail && movie.thumbnail.startsWith('http')) {
+                const ext = path.extname(movie.thumbnail).split('?')[0] || '.jpg';
+                const filename = `thumb_${i+1}${ext}`;
                 const filepath = `${imagesDir}/${filename}`;
-                try {
-                  await downloadImage(movie.thumbnail, filepath);
+                const success = await downloadImage(movie.thumbnail, filepath);
+                if (success) {
                   movie.localImage = `images/${filename}`;
-                  console.log(`✅ دانلود عکس ${i+1}: ${filename}`);
-                } catch(e) {
+                  downloadedImages++;
+                  console.log(`✅ عکس ${i+1}/${limitedMovies.length} دانلود شد`);
+                } else {
                   movie.localImage = null;
                 }
+              } else {
+                movie.localImage = null;
               }
             }
+            console.log(`📸 ${downloadedImages} عکس دانلود شد`);
             
-            // ساخت صفحه آفلاین با عکس‌ها
-            const offlinePage = `<!DOCTYPE html>
+            // ساخت فایل JSON
+            fs.writeFileSync(outputJson, JSON.stringify(limitedMovies, null, 2));
+            
+            // ساخت صفحه HTML آفلاین
+            const html = `<!DOCTYPE html>
             <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>Movies List - ${url}</title>
-                <style>
-                    * { margin: 0; padding: 0; box-sizing: border-box; }
-                    body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
-                    .container { max-width: 900px; margin: auto; }
-                    h1 { text-align: center; margin-bottom: 20px; color: #ff6b6b; }
-                    .info { background: #16213e; padding: 15px; border-radius: 10px; margin-bottom: 20px; }
-                    .movie-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-                    .movie-card {
-                        background: #0f3460;
-                        border-radius: 10px;
-                        overflow: hidden;
-                        transition: transform 0.3s;
-                        cursor: pointer;
-                    }
-                    .movie-card:hover { transform: translateY(-5px); }
-                    .movie-thumb {
-                        width: 100%;
-                        height: 120px;
-                        object-fit: cover;
-                        background: #16213e;
-                    }
-                    .movie-info { padding: 10px; }
-                    .movie-title {
-                        font-size: 14px;
-                        color: #fff;
-                        margin-bottom: 8px;
-                        display: -webkit-box;
-                        -webkit-line-clamp: 2;
-                        -webkit-box-orient: vertical;
-                        overflow: hidden;
-                    }
-                    .copy-btn {
-                        background: #ff6b6b;
-                        color: white;
-                        border: none;
-                        padding: 6px 12px;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        width: 100%;
-                    }
-                    .copy-btn:hover { background: #ff4757; }
-                    .toast {
-                        position: fixed;
-                        bottom: 20px;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        background: #4cd964;
-                        color: white;
-                        padding: 10px 20px;
-                        border-radius: 8px;
-                        display: none;
-                        z-index: 1000;
-                    }
-                    .footer { text-align: center; margin-top: 30px; padding: 20px; color: #666; font-size: 12px; }
-                    .instructions { background: #16213e; padding: 15px; border-radius: 10px; margin-top: 20px; }
-                </style>
+            <head><meta charset="UTF-8"><title>Movies - ${url}</title>
+            <style>
+              *{margin:0;padding:0;box-sizing:border-box}
+              body{font-family:Arial;background:#1a1a2e;color:#eee;padding:20px}
+              .container{max-width:1000px;margin:auto}
+              h1{text-align:center;margin-bottom:20px;color:#ff6b6b}
+              .info{background:#16213e;padding:15px;border-radius:10px;margin-bottom:20px}
+              .movie-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:15px}
+              .movie-card{background:#0f3460;border-radius:10px;overflow:hidden;transition:transform .3s;cursor:pointer}
+              .movie-card:hover{transform:translateY(-5px)}
+              .movie-thumb{width:100%;height:100px;object-fit:cover;background:#16213e}
+              .movie-info{padding:10px}
+              .movie-title{font-size:12px;color:#fff;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+              .copy-btn{background:#ff6b6b;color:#fff;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:11px;width:100%}
+              .copy-btn:hover{background:#ff4757}
+              .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#4cd964;color:#fff;padding:10px20px;border-radius:8px;display:none;z-index:1000}
+              .footer{text-align:center;margin-top:30px;padding:20px;color:#666;font-size:12px}
+            </style>
             </head>
             <body>
-                <div class="container">
-                    <h1>🎬 Movie Links Extractor</h1>
-                    
-                    <div class="info">
-                        <p><strong>📌 منبع:</strong> ${url}</p>
-                        <p><strong>📅 تاریخ:</strong> ${new Date().toLocaleString()}</p>
-                        <p><strong>🎥 تعداد فیلم‌ها:</strong> ${movies.length}</p>
-                    </div>
-                    
-                    <div class="movie-grid">
-                        ${movies.map((movie, i) => `
-                            <div class="movie-card" data-url="${movie.url.replace(/"/g, '&quot;')}">
-                                <img class="movie-thumb" src="${movie.localImage || 'https://via.placeholder.com/200x120?text=No+Image'}" alt="${movie.title}">
-                                <div class="movie-info">
-                                    <div class="movie-title" title="${movie.title}">${movie.title || 'بدون عنوان'}</div>
-                                    <button class="copy-btn" data-url="${movie.url.replace(/"/g, '&quot;')}">📋 کپی لینک</button>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                    
-                    <div class="instructions">
-                        <h3>📖 نحوه استخراج لینک:</h3>
-                        <p>روی دکمه <strong>"📋 کپی لینک"</strong> کلیک کنید تا لینک فیلم کپی شود.</p>
-                    </div>
-                    
-                    <div class="footer">✨ تولید شده توسط GitHub Actions</div>
-                </div>
-                
-                <div id="toast" class="toast">✅ لینک کپی شد!</div>
-                
-                <script>
-                    function showToast() {
-                        const toast = document.getElementById('toast');
-                        toast.style.display = 'block';
-                        setTimeout(() => { toast.style.display = 'none'; }, 1500);
-                    }
-                    
-                    function copyToClipboard(text) {
-                        navigator.clipboard.writeText(text).then(() => showToast());
-                    }
-                    
-                    document.querySelectorAll('.copy-btn').forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            const url = btn.getAttribute('data-url');
-                            copyToClipboard(url);
-                        });
-                    });
-                    
-                    document.querySelectorAll('.movie-card').forEach(card => {
-                        card.addEventListener('click', (e) => {
-                            if (e.target.classList.contains('copy-btn')) return;
-                            const url = card.getAttribute('data-url');
-                            copyToClipboard(url);
-                        });
-                    });
-                </script>
+            <div class="container">
+            <h1>🎬 Movie Links</h1>
+            <div class="info"><p>📌 منبع: ${url}</p><p>📅 تاریخ: ${new Date().toLocaleString()}</p><p>🎥 تعداد: ${limitedMovies.length}</p></div>
+            <div class="movie-grid">
+            ${limitedMovies.map((m, i) => `
+              <div class="movie-card" data-url="${m.url.replace(/"/g, '&quot;')}">
+                <img class="movie-thumb" src="${m.localImage || 'https://via.placeholder.com/180x100?text=No+Image'}" alt="${m.title.replace(/"/g, '&quot;')}">
+                <div class="movie-info"><div class="movie-title">${m.title || 'بدون عنوان'}</div><button class="copy-btn" data-url="${m.url.replace(/"/g, '&quot;')}">📋 کپی لینک</button></div>
+              </div>
+            `).join('')}
+            </div>
+            <div class="footer">✨ GitHub Actions | لینک فیلم‌ها با کلیک روی دکمه کپی می‌شود</div>
+            </div>
+            <div id="toast" class="toast">✅ لینک کپی شد!</div>
+            <script>
+              function copyToClipboard(text){navigator.clipboard.writeText(text);const t=document.getElementById('toast');t.style.display='block';setTimeout(()=>{t.style.display='none'},1500);}
+              document.querySelectorAll('.copy-btn').forEach(btn=>{btn.addEventListener('click',e=>{e.stopPropagation();copyToClipboard(btn.getAttribute('data-url'));});});
+              document.querySelectorAll('.movie-card').forEach(card=>{card.addEventListener('click',e=>{if(!e.target.classList.contains('copy-btn'))copyToClipboard(card.getAttribute('data-url'));});});
+            </script>
             </body>
             </html>`;
             
-            fs.writeFileSync(outputHtml, offlinePage);
-            fs.writeFileSync(outputJson, JSON.stringify(movies, null, 2));
-            
-            console.log(`✅ ${movies.length} فیلم با عکس استخراج شد`);
+            fs.writeFileSync(outputHtml, html);
+            console.log(`✅ فایل index.html ساخته شد`);
             await browser.close();
           })();
           EOF
           
-          node extract.js "$URL" "$OUTPUT_DIR/index.html" "$OUTPUT_DIR/movies.json" "$OUTPUT_DIR/images"
+          node extract.js "$URL" "$OUTPUT_DIR/index.html" "$OUTPUT_DIR/movies.json" "$OUTPUT_DIR/images" "$MAX_ITEMS" "$DOWNLOAD_IMAGES"
           
+          # ایجاد README
           cat > "$OUTPUT_DIR/README.md" << EOL
-          # 🎬 لیست فیلم‌ها با عکس
-          
+          # 🎬 لیست فیلم‌ها
           - **منبع**: $URL
           - **تاریخ**: $(date)
-          - **تعداد فیلم‌ها**: $(cat "$OUTPUT_DIR/movies.json" | jq '. | length')
+          - **تعداد**: $(cat "$OUTPUT_DIR/movies.json" | jq '. | length')
+          - **عکس‌ها**: $(ls "$OUTPUT_DIR/images" 2>/dev/null | wc -l) عدد
           
-          ## نحوه استفاده
-          
-          1. فایل \`index.html\` را در مرورگر باز کنید
-          2. روی دکمه **"📋 کپی لینک"** کلیک کنید
+          ## استفاده
+          1. فایل \`index.html\` را باز کنید
+          2. روی دکمه **کپی لینک** کلیک کنید
           3. لینک را در دانلود منیجر قرار دهید
-          
-          ## فایل‌ها
-          - \`index.html\` - صفحه قابل مشاهده
-          - \`movies.json\` - لیست کامل JSON
-          - \`images/\` - عکس فیلم‌ها
           EOL
           
+          # ایجاد ZIP
           cd "$OUTPUT_DIR"
           zip -r "../${OUTPUT_DIR}.zip" .
           cd ..
           
           echo "OUTPUT_DIR=$OUTPUT_DIR" >> $GITHUB_ENV
+          echo ""
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add ${{ env.OUTPUT_DIR }}/
-          git commit -m "دانلود فیلم‌ها با عکس از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git commit -m "دانلود فیلم‌ها از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
           git push origin master
 
       - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: movies-with-images
+          name: movies-pack
           path: ${{ env.OUTPUT_DIR }}/
+
+      - name: نمایش نتیجه
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ عملیات با موفقیت انجام شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "📁 پوشه: ${{ env.OUTPUT_DIR }}"
+          echo "🎬 تعداد: $(cat ${{ env.OUTPUT_DIR }}/movies.json | jq '. | length')"
+          echo "📸 عکس‌ها: $(ls ${{ env.OUTPUT_DIR }}/images 2>/dev/null | wc -l)"
+          echo "📦 ZIP: ${{ env.OUTPUT_DIR }}.zip"
+          echo "═══════════════════════════════════════════════════════════"
