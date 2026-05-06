@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write
+      workflows: write   # 👈 اضافه شد برای مجوز تغییر فایل‌های workflow
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,7 +92,6 @@ jobs:
           TOTAL_FOUND=$(cat output/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
           echo "تعداد کل فیلم‌های پیدا شده: $TOTAL_FOUND"
           
-          # محدود کردن تعداد فیلم‌ها بر اساس ورودی کاربر
           if [ "$MAX_VIDEOS" -lt "$TOTAL_FOUND" ] 2>/dev/null; then
             SELECTED_COUNT=$MAX_VIDEOS
             echo "با توجه به درخواست شما، فقط $SELECTED_COUNT فیلم اول پردازش می‌شود"
@@ -100,7 +99,6 @@ jobs:
             SELECTED_COUNT=$TOTAL_FOUND
           fi
           
-          # ذخیره لینک‌های محدود شده
           cat output/extracted_links.json | jq -r ".pageVideoLinks[:$SELECTED_COUNT] | .[] | .url" > output/video_pages.txt
           
           echo "═══════════════════════════════════════════════════════════" > output/video_links.txt
@@ -190,6 +188,7 @@ jobs:
               runs-on: ubuntu-latest
               permissions:
                 contents: write
+                workflows: write
               steps:
                 - uses: actions/checkout@v4
                 - name: نصب yt-dlp
