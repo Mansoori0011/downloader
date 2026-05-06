@@ -1,69 +1,29 @@
-name: Download Website as MHT
+name: ذخیره آفلاین وبسایت
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت (مثال: https://example.com)'
+        description: 'آدرس وبسایت'
         required: true
-        type: string
-      filename:
-        description: 'نام فایل (بدون پسوند)'
-        required: false
-        type: string
-        default: ''
 
 jobs:
-  mht:
+  save-site:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: master
-
-      - name: نصب ابزارها
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl
-          
-          # نصب monolith برای ساخت فایل یکپارچه
-          wget https://github.com/Y2Z/monolith/releases/latest/download/monolith-linux-amd64
-          chmod +x monolith-linux-amd64
-          sudo mv monolith-linux-amd64 /usr/local/bin/monolith
-
-      - name: دانلود به صورت MHT
+      - name: دانلود و بسته‌بندی سایت
         run: |
           URL="${{ github.event.inputs.url }}"
-          USER_NAME="${{ github.event.inputs.filename }}"
-          
-          # اگر نام فایل وارد نشده، از نام دامنه استفاده کن
-          if [ -z "$USER_NAME" ]; then
-            FILENAME=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
-          else
-            FILENAME="$USER_NAME"
-          fi
-          
-          # حذف و ساخت مجدد پوشه
-          rm -rf web-archive
-          mkdir -p web-archive
-          
-          echo "در حال دانلود: $URL"
-          echo "نام فایل: ${FILENAME}.mht"
-          
-          # ساخت فایل MHT با monolith
-          monolith "$URL" -o "web-archive/${FILENAME}.mht"
-          
-          echo "✅ فایل MHT در web-archive/${FILENAME}.mht ذخیره شد"
-
+          mkdir -p offline-site
+          wget --page-requisites --convert-links --adjust-extension --no-parent -P offline-site "$URL"
+          cd offline-site && zip -r ../site-backup.zip . && cd ..
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          
-          git add web-archive/
-          git commit -m "دانلود MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
-          git push origin master
-          
-          echo "✅ فایل در مخزن ذخیره شد"
+          git add offline-site site-backup.zip
+          git commit -m "ذخیره آفلاین سایت: $URL" || echo "تغییری وجود ندارد"
+          git push
