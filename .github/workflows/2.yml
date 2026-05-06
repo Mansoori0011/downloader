@@ -1,4 +1,4 @@
-name: 🎬 استخراج فیلم، اسکرین‌شات و تولید فایل پویا
+name: 🎬 استخراج لینک فیلم‌ها (مثل کد شما) + اسکرین‌شات + فایل پویا
 
 on:
   workflow_dispatch:
@@ -8,17 +8,9 @@ on:
         required: true
         type: string
         default: 'https://www.example.com'
-      screenshot_quality:
-        description: 'کیفیت اسکرین‌شات (full یا thumbnail)'
-        required: false
-        type: choice
-        options:
-          - full
-          - thumbnail
-        default: 'full'
 
 jobs:
-  extract-and-download:
+  extract-all:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,7 +25,7 @@ jobs:
           npm init -y
           npm install puppeteer
 
-      - name: ساخت اسکریپت استخراج لینک‌ها
+      - name: ساخت اسکریپت استخراج لینک‌ها (مثل کد شما)
         run: |
           cat > extract.js << 'EOF'
           const puppeteer = require('puppeteer');
@@ -53,6 +45,7 @@ jobs:
             const videoUrls = new Set();
             const pageVideoLinks = [];
             
+            // مانیتور کردن درخواست‌های شبکه (مثل کد شما)
             page.on('request', request => {
               const requestUrl = request.url();
               if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
@@ -61,12 +54,14 @@ jobs:
                   requestUrl.match(/\/hls\//i) ||
                   requestUrl.match(/\/view_video\.php/i)) {
                 videoUrls.add(requestUrl);
+                console.log('Found URL:', requestUrl.substring(0, 100));
               }
             });
             
             console.log('Loading page:', url);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             
+            // اسکرول با روش صحیح (مثل کد شما)
             console.log('Scrolling page...');
             for (let i = 0; i < 5; i++) {
               await page.evaluate(() => {
@@ -75,6 +70,7 @@ jobs:
               await new Promise(resolve => setTimeout(resolve, 2000));
             }
             
+            // استخراج لینک‌ها از المنت‌های صفحه (مثل کد شما)
             const links = await page.$$eval('a', (elements) => {
               const results = [];
               elements.forEach(a => {
@@ -93,6 +89,7 @@ jobs:
             });
             
             links.forEach(link => pageVideoLinks.push(link));
+            
             await browser.close();
             
             const result = {
@@ -103,7 +100,13 @@ jobs:
             };
             
             fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
-            console.log('Found:', pageVideoLinks.length, 'video links');
+            console.log('\n========================================');
+            console.log('نتایج:');
+            console.log('========================================');
+            console.log('لینک‌های یافت شده از شبکه:', videoUrls.size);
+            console.log('لینک‌های صفحات فیلم:', pageVideoLinks.length);
+            console.log('========================================');
+            
           })().catch(err => {
             console.error('Error:', err.message);
             process.exit(1);
@@ -114,29 +117,53 @@ jobs:
         run: |
           PAGE_URL="${{ github.event.inputs.page_url }}"
           
-          # حذف پوشه قبلی اگر وجود داشته باشد
+          # حذف پوشه قبلی و ایجاد پوشه جدید file
           rm -rf file 2>/dev/null || true
           mkdir -p file/screenshots
           
           echo "در حال استخراج لینک‌ها از: $PAGE_URL"
           node extract.js "$PAGE_URL" "file/extracted_links.json"
           
-          # استخراج اطلاعات فیلم‌ها با yt-dlp
-          echo "در حال دریافت اطلاعات فیلم‌ها..."
-          echo "[" > "file/videos_info.json"
+          echo "═══════════════════════════════════════════════════════════" > "file/video_links.txt"
+          echo "لیست لینک‌های فیلم‌ها" >> "file/video_links.txt"
+          echo "آدرس صفحه: $PAGE_URL" >> "file/video_links.txt"
+          echo "تاریخ: $(date)" >> "file/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "file/video_links.txt"
+          echo "" >> "file/video_links.txt"
           
-          TOTAL_VIDEOS=$(cat "file/extracted_links.json" | jq -r '.pageVideoLinks | length')
-          echo "تعداد فیلم‌های پیدا شده: $TOTAL_VIDEOS"
+          # لینک‌های مستقیم (مثل کد شما)
+          echo "🎬 لینک‌های مستقیم پیدا شده:" >> "file/video_links.txt"
+          echo "════════════════════════════════════" >> "file/video_links.txt"
+          cat "file/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "file/video_links.txt"
+          
+          echo "" >> "file/video_links.txt"
+          echo "" >> "file/video_links.txt"
+          
+          # لینک‌های صفحات فیلم (مثل کد شما)
+          echo "📄 لینک‌های صفحات فیلم:" >> "file/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "file/video_links.txt"
+          cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "file/video_links.txt"
+          
+          # ذخیره لینک‌های صفحات فیلم (مثل کد شما)
+          cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "file/video_pages.txt"
+          
+          VIDEO_COUNT=$(cat "file/video_pages.txt" 2>/dev/null | wc -l)
+          DIRECT_COUNT=$(cat "file/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
+          
+          # دریافت اطلاعات دقیق فیلم‌ها با yt-dlp
+          echo "در حال دریافت اطلاعات دقیق فیلم‌ها..."
+          echo "[" > "file/videos_info.json"
           
           COUNTER=0
           while IFS= read -r url; do
             COUNTER=$((COUNTER + 1))
-            echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL_VIDEOS..."
+            echo "دریافت اطلاعات فیلم $COUNTER از $VIDEO_COUNT..."
             
             TITLE=$(yt-dlp --get-title "$url" 2>/dev/null || echo "فیلم $COUNTER")
             DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null || echo "نامشخص")
             THUMBNAIL=$(yt-dlp --get-thumbnail "$url" 2>/dev/null || echo "")
             
+            # دریافت کیفیت‌های موجود
             FORMATS=$(yt-dlp -F "$url" 2>/dev/null | grep -E '^[0-9]+' | awk '{print $2}' | grep -E '[0-9]+p' | sort -u | tr '\n' ',' | sed 's/,$//')
             if [ -z "$FORMATS" ]; then
               FORMATS="best"
@@ -156,24 +183,10 @@ jobs:
           
           sed -i '$ s/,$//' "file/videos_info.json"
           echo "]" >> "file/videos_info.json"
-          
-          echo "═══════════════════════════════════════════════════════════" > "file/video_list.txt"
-          echo "لیست فیلم‌های پیدا شده" >> "file/video_list.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "file/video_list.txt"
-          echo "" >> "file/video_list.txt"
-          
-          for i in $(seq 1 $TOTAL_VIDEOS); do
-            TITLE=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].title")
-            URL=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].url")
-            echo "[$i] $TITLE" >> "file/video_list.txt"
-            echo "    لینک: $URL" >> "file/video_list.txt"
-            echo "" >> "file/video_list.txt"
-          done
 
       - name: گرفتن اسکرین‌شات (جایگزینی)
         run: |
           PAGE_URL="${{ github.event.inputs.page_url }}"
-          QUALITY="${{ github.event.inputs.screenshot_quality }}"
           
           cat > screenshot.js << 'JSEOF'
           const puppeteer = require('puppeteer');
@@ -197,14 +210,13 @@ jobs:
           rm -f "file/screenshots/fullpage.png" 2>/dev/null
           rm -f "file/screenshots/thumbnail.png" 2>/dev/null
           
-          # گرفتن اسکرین‌شات جدید
-          if [ "$QUALITY" = "full" ]; then
-            node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png" "full"
-            echo "✅ اسکرین‌شات کامل جایگزین شد"
-          else
-            node screenshot.js "$PAGE_URL" "file/screenshots/thumbnail.png"
-            echo "✅ اسکرین‌شات بندانگشتی جایگزین شد"
-          fi
+          # گرفتن اسکرین‌شات کامل
+          node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png" "full"
+          
+          # گرفتن اسکرین‌شات بندانگشتی
+          node screenshot.js "$PAGE_URL" "file/screenshots/thumbnail.png"
+          
+          echo "✅ اسکرین‌شات‌ها جایگزین شدند"
 
       - name: ایجاد فایل YAML پویا برای دانلود فیلم‌ها
         run: |
@@ -301,20 +313,32 @@ jobs:
       - name: ایجاد فایل README اصلی
         run: |
           TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length')
+          DIRECT_COUNT=$(cat "file/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
           
           cat > "file/README.md" << EOL
-          # 🎬 نتایج استخراج فیلم‌ها
-  
+          # 🎬 نتایج استخراج لینک فیلم
+
           - **آدرس صفحه**: ${{ github.event.inputs.page_url }}
           - **تاریخ**: $(date)
-          - **تعداد فیلم‌های پیدا شده**: $TOTAL_VIDEOS
-  
+          - **تعداد لینک‌های مستقیم**: $DIRECT_COUNT
+          - **تعداد لینک‌های صفحات فیلم**: $TOTAL_VIDEOS
+
           ## 📸 اسکرین‌شات صفحه
-  
-          ![اسکرین‌شات](./screenshots/${{ github.event.inputs.screenshot_quality == 'full' && 'fullpage.png' || 'thumbnail.png' }})
-  
+
+          ![اسکرین‌شات کامل](./screenshots/fullpage.png)
+          ![اسکرین‌شات بندانگشتی](./screenshots/thumbnail.png)
+
+          ## 📂 فایل‌های موجود
+
+          | فایل | توضیح |
+          |------|-------|
+          | [video_links.txt](./video_links.txt) | لیست کامل لینک‌ها |
+          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم |
+          | [extracted_links.json](./extracted_links.json) | اطلاعات کامل JSON |
+          | [videos_info.json](./videos_info.json) | اطلاعات دقیق فیلم‌ها |
+
           ## 🎥 لیست فیلم‌ها
-  
+
           | شماره | عنوان | مدت | کیفیت‌های موجود |
           |-------|-------|------|-----------------|
           $(for i in $(seq 1 $TOTAL_VIDEOS); do
@@ -323,17 +347,17 @@ jobs:
             QUALITIES=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].qualities")
             echo "| $i | $TITLE | $DURATION | $QUALITIES |"
           done)
-  
+
           ## 📥 نحوه دانلود
-  
+
           1. به تب **Actions** بروید
           2. روی **"📥 دانلود فیلم انتخابی با کیفیت دلخواه"** کلیک کنید
           3. شماره فیلم را انتخاب کنید
           4. کیفیت مورد نظر را انتخاب کنید
           5. **Run workflow** را بزنید
-  
+
           ---
-          *تاریخ آخرین بروزرسانی: $(date)*
+          *تولید شده توسط GitHub Actions - تاریخ آخرین بروزرسانی: $(date)*
           EOL
 
       - name: ذخیره همه فایل‌ها در مخزن
@@ -345,9 +369,16 @@ jobs:
           git commit -m "بروزرسانی: استخراج فیلم‌ها از ${{ github.event.inputs.page_url }}" || echo "تغییری وجود ندارد"
           git push || echo "خطا در ارسال"
 
+      - name: آپلود به عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-video-links
+          path: file/
+
       - name: نمایش نتایج نهایی
         run: |
           TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length')
+          DIRECT_COUNT=$(cat "file/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
           
           echo ""
           echo "═══════════════════════════════════════════════════════════"
@@ -355,7 +386,8 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
           echo ""
           echo "📁 پوشه نتایج: file/"
-          echo "🎬 تعداد فیلم‌ها: $TOTAL_VIDEOS"
+          echo "🎬 لینک‌های مستقیم: $DIRECT_COUNT"
+          echo "🎬 لینک‌های صفحات فیلم: $TOTAL_VIDEOS"
           echo "📸 اسکرین‌شات: file/screenshots/"
           echo ""
           echo "📥 برای دانلود فیلم‌ها:"
