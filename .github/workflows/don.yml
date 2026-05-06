@@ -1,10 +1,10 @@
-name: دانلود فیلم با Puppeteer
+name: دانلود فیلم با Puppeteer (Network Monitor)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'لینک فیلم (view_video.php?viewkey=...)'
+        description: 'لینک فیلم'
         required: true
         type: string
 
@@ -23,14 +23,14 @@ jobs:
           npm init -y
           npm install puppeteer
 
-      - name: استخراج لینک مستقیم و دانلود
+      - name: استخراج لینک و دانلود
         run: |
           URL="${{ github.event.inputs.url }}"
           
           cat > extract.js << 'EOF'
           const puppeteer = require('puppeteer');
-          const fs = require('fs');
           const { exec } = require('child_process');
+          const fs = require('fs');
           
           (async () => {
             const url = process.argv[2];
@@ -42,85 +42,60 @@ jobs:
             const page = await browser.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
             
+            // جمع‌آوری درخواست‌های شبکه
+            const videoUrls = new Set();
+            
+            page.on('request', request => {
+              const reqUrl = request.url();
+              // جستجوی لینک‌های ویدیویی
+              if (reqUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
+                  reqUrl.includes('/video/') ||
+                  reqUrl.includes('/get_file/') ||
+                  reqUrl.includes('/hls/')) {
+                videoUrls.add(reqUrl);
+                console.log('🎬 لینک پیدا شد:', reqUrl.substring(0, 150));
+              }
+            });
+            
             console.log('در حال بارگذاری:', url);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             
-            // منتظر بمان تا پلیر لود شود
-            await new Promise(r => setTimeout(r, 5000));
-            
-            // استخراج لینک ویدیو از تگ video
-            const videoUrl = await page.evaluate(() => {
-              const video = document.querySelector('video');
-              if (video && video.src) {
-                return video.src;
-              }
-              // جستجو در source ها
-              const source = document.querySelector('source');
-              if (source && source.src) {
-                return source.src;
-              }
-              return null;
-            });
-            
-            if (videoUrl) {
-              console.log('✅ لینک مستقیم پیدا شد:', videoUrl);
-              console.log('در حال دانلود...');
-              
-              // دانلود با wget
-              exec(`wget -O video.mp4 "${videoUrl}"`, (error, stdout, stderr) => {
-                if (error) {
-                  console.error('خطا در دانلود:', error);
-                } else {
-                  console.log('✅ دانلود کامل شد: video.mp4');
-                }
-              });
-            } else {
-              console.log('❌ لینک مستقیم پیدا نشد');
-              console.log('در حال جستجوی شبکه...');
-              
-              // مانیتور درخواست‌های شبکه
-              const requests = [];
-              page.on('request', request => {
-                const reqUrl = request.url();
-                if (reqUrl.includes('.mp4') || reqUrl.includes('.m3u8')) {
-                  requests.push(reqUrl);
-                  console.log('🎬 پیدا شد:', reqUrl);
-                }
-              });
-              
-              await page.reload({ waitUntil: 'networkidle2' });
-              await new Promise(r => setTimeout(r, 10000));
-              
-              if (requests.length > 0) {
-                console.log('لینک پیدا شده:', requests[0]);
-                exec(`wget -O video.mp4 "${requests[0]}"`, (error) => {
-                  if (error) console.error('خطا:', error);
-                  else console.log('✅ دانلود شد');
-                });
-              }
+            // اسکرول و انتظار برای لود ویدیو
+            console.log('اسکرول صفحه...');
+            for (let i = 0; i < 3; i++) {
+              await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+              await new Promise(r => setTimeout(r, 2000));
             }
             
+            // کلیک روی دکمه پخش (اگر لازم باشد)
+            await page.evaluate(() => {
+              const playBtn = document.querySelector('button[class*="play"], div[class*="play"]');
+              if (playBtn) playBtn.click();
+            });
+            
+            await new Promise(r => setTimeout(r, 5000));
+            
             await browser.close();
+            
+            if (videoUrls.size > 0) {
+              const videoUrl = Array.from(videoUrls)[0];
+              console.log('✅ لینک مستقیم:', videoUrl);
+              
+              // دانلود
+              exec(`wget --user-agent="Mozilla/5.0" -O video.mp4 "${videoUrl}"`, (error) => {
+                if (error) console.error('خطا:', error);
+                else console.log('✅ دانلود شد');
+              });
+            } else {
+              console.log('❌ هیچ لینک ویدیویی پیدا نشد');
+            }
           })();
           EOF
           
           node extract.js "$URL"
-          
-          # آپلود فایل
-          echo "FILE_READY=true" >> $GITHUB_ENV
+          sleep 10
 
-      - name: ذخیره در مخزن
-        if: env.FILE_READY == 'true'
-        run: |
-          if [ -f video.mp4 ]; then
-            git config user.name "github-actions"
-            git config user.email "actions@github.com"
-            git add video.mp4
-            git commit -m "دانلود فیلم" || echo "تغییری وجود ندارد"
-            git push
-          fi
-
-      - name: آپلود Artifact
+      - name: آپلود فایل
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
