@@ -1,12 +1,23 @@
-name: دانلود فیلم با Puppeteer (Network Monitor)
+name: دانلود فیلم با انتخاب کیفیت
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'لینک فیلم'
+      video_url:
+        description: 'لینک صفحه فیلم (view_video.php?viewkey=...)'
         required: true
         type: string
+      quality:
+        description: 'کیفیت مورد نظر'
+        required: true
+        type: choice
+        default: 'best'
+        options:
+          - 'best'
+          - '1080p'
+          - '720p'
+          - '480p'
+          - '360p'
 
 jobs:
   download:
@@ -15,88 +26,57 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
 
-      - name: نصب ابزارها
+      - name: نصب yt-dlp
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl wget
-          npm init -y
-          npm install puppeteer
+          pip install yt-dlp
 
-      - name: استخراج لینک و دانلود
+      - name: دانلود فیلم با کیفیت انتخاب شده
         run: |
-          URL="${{ github.event.inputs.url }}"
+          URL="${{ github.event.inputs.video_url }}"
+          QUALITY="${{ github.event.inputs.quality }}"
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
           
-          cat > extract.js << 'EOF'
-          const puppeteer = require('puppeteer');
-          const { exec } = require('child_process');
-          const fs = require('fs');
+          echo "═══════════════════════════════════════════════════════════"
+          echo "🎬 در حال دانلود فیلم"
+          echo "🔗 لینک: $URL"
+          echo "🎚️ کیفیت: $QUALITY"
+          echo "═══════════════════════════════════════════════════════════"
           
-          (async () => {
-            const url = process.argv[2];
-            
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
-            const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-            
-            // جمع‌آوری درخواست‌های شبکه
-            const videoUrls = new Set();
-            
-            page.on('request', request => {
-              const reqUrl = request.url();
-              // جستجوی لینک‌های ویدیویی
-              if (reqUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
-                  reqUrl.includes('/video/') ||
-                  reqUrl.includes('/get_file/') ||
-                  reqUrl.includes('/hls/')) {
-                videoUrls.add(reqUrl);
-                console.log('🎬 لینک پیدا شد:', reqUrl.substring(0, 150));
-              }
-            });
-            
-            console.log('در حال بارگذاری:', url);
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            
-            // اسکرول و انتظار برای لود ویدیو
-            console.log('اسکرول صفحه...');
-            for (let i = 0; i < 3; i++) {
-              await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-              await new Promise(r => setTimeout(r, 2000));
-            }
-            
-            // کلیک روی دکمه پخش (اگر لازم باشد)
-            await page.evaluate(() => {
-              const playBtn = document.querySelector('button[class*="play"], div[class*="play"]');
-              if (playBtn) playBtn.click();
-            });
-            
-            await new Promise(r => setTimeout(r, 5000));
-            
-            await browser.close();
-            
-            if (videoUrls.size > 0) {
-              const videoUrl = Array.from(videoUrls)[0];
-              console.log('✅ لینک مستقیم:', videoUrl);
-              
-              // دانلود
-              exec(`wget --user-agent="Mozilla/5.0" -O video.mp4 "${videoUrl}"`, (error) => {
-                if (error) console.error('خطا:', error);
-                else console.log('✅ دانلود شد');
-              });
-            } else {
-              console.log('❌ هیچ لینک ویدیویی پیدا نشد');
-            }
-          })();
-          EOF
+          # انتخاب کیفیت
+          case "$QUALITY" in
+            "best")
+              yt-dlp -f best -o "video_${TIMESTAMP}.mp4" "$URL"
+              ;;
+            "1080p")
+              yt-dlp -f "best[height<=1080]" -o "video_${TIMESTAMP}.mp4" "$URL"
+              ;;
+            "720p")
+              yt-dlp -f "best[height<=720]" -o "video_${TIMESTAMP}.mp4" "$URL"
+              ;;
+            "480p")
+              yt-dlp -f "best[height<=480]" -o "video_${TIMESTAMP}.mp4" "$URL"
+              ;;
+            "360p")
+              yt-dlp -f "best[height<=360]" -o "video_${TIMESTAMP}.mp4" "$URL"
+              ;;
+          esac
           
-          node extract.js "$URL"
-          sleep 10
+          echo "✅ دانلود کامل شد: video_${TIMESTAMP}.mp4"
+          echo "FILE_NAME=video_${TIMESTAMP}.mp4" >> $GITHUB_ENV
 
-      - name: آپلود فایل
+      - name: ذخیره در مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add "${{ env.FILE_NAME }}"
+          git commit -m "دانلود فیلم با کیفیت ${{ github.event.inputs.quality }}" || echo "تغییری وجود ندارد"
+          git push origin master
+
+      - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
-          path: video.mp4
+          path: ${{ env.FILE_NAME }}
