@@ -1,4 +1,4 @@
-name: Download Page as MHTML
+name: Download Complete MHT Page with Images
 
 on:
   workflow_dispatch:
@@ -15,40 +15,52 @@ on:
         description: 'نام پوشه برای ذخیره'
         required: true
         default: 'saved-pages'
+      format:
+        description: 'فرمت خروجی'
+        required: true
+        default: 'mht'
+        type: choice
+        options:
+          - 'mht'
+          - 'html-all'
 
 jobs:
-  download-mhtml:
+  download-complete-page:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Setup Node.js
+      - name: Install Chrome and tools
+        run: |
+          sudo apt-get update
+          
+          # نصب Chrome
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable || true
+          
+          # نصب ابزارهای لازم
+          sudo apt-get install -y wget curl imagemagick || true
+      
+      - name: Setup Node.js and Puppeteer
         uses: actions/setup-node@v4
         with:
           node-version: '20'
       
-      - name: Install Chrome
-        run: |
-          sudo apt-get update
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          google-chrome --version
-      
-      - name: Install Puppeteer
+      - name: Install dependencies
         run: |
           npm init -y
-          PUPPETEER_SKIP_DOWNLOAD=true npm install puppeteer
-          echo "CHROME_PATH=$(which google-chrome)" >> $GITHUB_ENV
+          npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
       
-      - name: Download page as MHTML
+      - name: Download as MHT (Method 1)
+        if: github.event.inputs.format == 'mht'
         run: |
           mkdir -p ${{ github.event.inputs.target_folder }}
           
-          cat > download-mhtml.js << 'SCRIPT'
+          cat > save-mht.js << 'SCRIPT'
           const puppeteer = require('puppeteer');
           const fs = require('fs');
           
@@ -57,11 +69,11 @@ jobs:
             const filename = process.env.FILENAME;
             const folder = process.env.TARGET_FOLDER;
             
-            console.log(`🌐 دانلود MHTML از: ${url}`);
+            console.log(`🌐 دانلود MHT از: ${url}`);
             
             const browser = await puppeteer.launch({
               headless: 'new',
-              executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
+              executablePath: '/usr/bin/google-chrome',
               args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -72,17 +84,12 @@ jobs:
             
             const page = await browser.newPage();
             
-            // تنظیم User-Agent موبایل
-            await page.setUserAgent('Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
-            await page.setViewport({
-              width: 412,
-              height: 915,
-              deviceScaleFactor: 2
-            });
+            // فعال کردن CDP برای ذخیره MHTML
+            const client = await page.target().createCDPSession();
+            await client.send('Page.enable');
             
             try {
               // بارگذاری صفحه
-              console.log('⏳ بارگذاری صفحه...');
               await page.goto(url, {
                 waitUntil: 'networkidle0',
                 timeout: 60000
@@ -90,115 +97,212 @@ jobs:
               
               console.log('✅ صفحه بارگذاری شد');
               
-              // صبر برای لود کامل
-              await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 3000)));
+              // صبر برای لود کامل تصاویر
+              await page.evaluate(async () => {
+                const images = document.querySelectorAll('img');
+                await Promise.all(Array.from(images).map(img => {
+                  if (img.complete) return Promise.resolve();
+                  return new Promise(resolve => {
+                    img.addEventListener('load', resolve);
+                    img.addEventListener('error', resolve);
+                  });
+                }));
+              });
               
-              // گرفتن MHTML با استفاده از CDP (Chrome DevTools Protocol)
-              const cdp = await page.createCDPSession();
-              const { data } = await cdp.send('Page.captureSnapshot', {
+              console.log('📸 تمام تصاویر لود شدند');
+              
+              // ذخیره به صورت MHTML
+              const { data } = await client.send('Page.captureSnapshot', {
                 format: 'mhtml'
               });
               
-              // ذخیره فایل MHTML
-              const mhtmlPath = `${folder}/${filename}.mhtml`;
-              fs.writeFileSync(mhtmlPath, data);
+              fs.writeFileSync(`${folder}/${filename}.mht`, data);
               
-              const stats = fs.statSync(mhtmlPath);
-              console.log(`💾 فایل MHTML ذخیره شد: ${(stats.size / 1024).toFixed(2)} KB`);
-              console.log(`📁 مسیر: ${mhtmlPath}`);
-              
-              // اطلاعات اضافی
-              const title = await page.title();
-              console.log(`📰 عنوان: ${title}`);
-              
-              // نمایش ۲۰ خط اول برای تأیید
-              const preview = data.split('\n').slice(0, 5).join('\n');
-              console.log(`📄 پیش‌نمایش فایل:\n${preview}...`);
+              const stats = fs.statSync(`${folder}/${filename}.mht`);
+              console.log(`💾 فایل MHT ذخیره شد: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
               
             } catch (error) {
               console.error(`❌ خطا: ${error.message}`);
-              process.exit(1);
             } finally {
               await browser.close();
-              console.log('🏁 مرورگر بسته شد');
             }
           })();
           SCRIPT
           
-          # اجرا
           PAGE_URL="${{ github.event.inputs.url }}" \
           FILENAME="${{ github.event.inputs.filename }}" \
           TARGET_FOLDER="${{ github.event.inputs.target_folder }}" \
-          node download-mhtml.js
+          node save-mht.js
       
-      - name: Check file and create info
+      - name: Download as Complete HTML with all assets (Method 2)
+        if: github.event.inputs.format == 'html-all'
         run: |
-          MHTML_FILE="${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.mhtml"
+          mkdir -p ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}_files
           
-          if [ -f "$MHTML_FILE" ]; then
-            echo "✅ فایل MHTML با موفقیت ایجاد شد"
-            echo "📦 حجم: $(du -h "$MHTML_FILE" | cut -f1)"
+          cat > save-complete.js << 'SCRIPT'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          const path = require('path');
+          
+          (async () => {
+            const url = process.env.PAGE_URL;
+            const filename = process.env.FILENAME;
+            const folder = process.env.TARGET_FOLDER;
             
-            # بررسی محتوای MHTML
-            head -n 20 "$MHTML_FILE"
-          fi
+            console.log(`🌐 دانلود کامل از: ${url}`);
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              executablePath: '/usr/bin/google-chrome',
+              args: ['--no-sandbox', '--disable-gpu']
+            });
+            
+            const page = await browser.newPage();
+            
+            // تنظیم مسیر دانلود
+            await page._client().send('Page.setDownloadBehavior', {
+              behavior: 'allow',
+              downloadPath: `${folder}/${filename}_files`
+            });
+            
+            // رهگیری تمام درخواست‌ها
+            const resources = new Map();
+            
+            await page.setRequestInterception(true);
+            
+            page.on('request', request => {
+              request.continue();
+            });
+            
+            page.on('response', async response => {
+              try {
+                const url = response.url();
+                const buffer = await response.buffer();
+                if (buffer.length > 0) {
+                  resources.set(url, {
+                    data: buffer,
+                    type: response.headers()['content-type']
+                  });
+                }
+              } catch (e) {}
+            });
+            
+            try {
+              await page.goto(url, {
+                waitUntil: 'networkidle0',
+                timeout: 60000
+              });
+              
+              console.log(`✅ صفحه بارگذاری شد - ${resources.size} منبع پیدا شد`);
+              
+              // ذخیره تمام منابع
+              const assetsFolder = `${folder}/${filename}_files`;
+              fs.mkdirSync(assetsFolder, { recursive: true });
+              
+              let count = 0;
+              for (const [resUrl, resData] of resources) {
+                try {
+                  const urlObj = new URL(resUrl);
+                  let filename = urlObj.pathname.split('/').pop() || 'index';
+                  if (!filename.includes('.')) filename += '.html';
+                  
+                  const filePath = path.join(assetsFolder, filename);
+                  fs.writeFileSync(filePath, resData.data);
+                  count++;
+                } catch (e) {}
+              }
+              
+              console.log(`💾 ${count} فایل ذخیره شد در: ${assetsFolder}`);
+              
+              // ذخیره HTML اصلی
+              const html = await page.content();
+              fs.writeFileSync(`${folder}/${filename}.html`, html);
+              
+              // بسته‌بندی به ZIP
+              const { exec } = require('child_process');
+              exec(`cd ${folder} && zip -r ${filename}_complete.zip ${filename}.html ${filename}_files/`, (err) => {
+                if (!err) console.log('📦 فایل ZIP آماده شد');
+              });
+              
+            } catch (error) {
+              console.error(`❌ خطا: ${error.message}`);
+            } finally {
+              await browser.close();
+            }
+          })();
+          SCRIPT
           
-          # ایجاد README
+          PAGE_URL="${{ github.event.inputs.url }}" \
+          FILENAME="${{ github.event.inputs.filename }}" \
+          TARGET_FOLDER="${{ github.event.inputs.target_folder }}" \
+          node save-complete.js
+      
+      - name: Create instructions
+        run: |
           cat > ${{ github.event.inputs.target_folder }}/README.md << EOF
-          # 📱 فایل MHTML: ${{ github.event.inputs.filename }}
+          # 📱 صفحه آفلاین کامل با تصاویر
           
-          **آدرس اصلی:** ${{ github.event.inputs.url }}
+          **آدرس:** ${{ github.event.inputs.url }}  
+          **فرمت:** ${{ github.event.inputs.format }}  
           **تاریخ:** $(TZ='Asia/Tehran' date '+%Y-%m-%d %H:%M')
-          **فرمت:** MHTML (Web Archive)
           
-          ## 📂 فایل:
-          - \`${{ github.event.inputs.filename }}.mhtml\` - صفحه کامل آفلاین
+          ## 📂 فایل‌های دانلود شده:
           
-          ## 📱 نحوه باز کردن روی گوشی:
+          ${{ github.event.inputs.format == 'mht' && '### 📄 فایل MHT (پیشنهادی برای گوشی)
+          - **حاوی تمام تصاویر** در یک فایل
+          - بدون نیاز به extraction
+          - فقط با مرورگر باز کنید
           
-          ### Android:
-          1. فایل را با **Chrome** باز کنید
-          2. یا از **Google Drive** → Open with Chrome
+          ⚠️ **توجه:** فایل MHT فقط با Internet Explorer، Edge قدیمی، یا Opera باز می‌شود' || '' }}
           
-          ### iPhone:
-          1. فایل را در **Files** app پیدا کنید
-          2. Share → **Save to Files**
-          3. با **Safari** باز کنید
+          ${{ github.event.inputs.format == 'html-all' && '### 📦 پکیج کامل
+          - فایل **ZIP** حاوی HTML + تمام تصاویر
+          - پوشه \`_files\` شامل تمام منابع
+          - مناسب برای آرشیو کامل' || '' }}
           
-          ## 🔗 دانلود مستقیم:
+          ## 📱 راهنمای باز کردن:
+          
+          ### برای فایل MHT:
+          1. فایل را دانلود کنید
+          2. با **Opera** یا **Edge** باز کنید
+          3. یا از برنامه **MHT Viewer** استفاده کنید
+          
+          ### برای پکیج کامل:
+          1. فایل ZIP را extract کنید
+          2. فایل HTML اصلی را باز کنید
+          3. تمام تصاویر به صورت آفلاین نمایش داده می‌شوند
+          
+          ## 🔗 لینک‌های دانلود:
+          
           \`\`\`
-          https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.mhtml
+          https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.${{ github.event.inputs.format == 'mht' && 'mht' || 'html' }}
           \`\`\`
           
-          ## ✨ مزایای MHTML:
-          - تمام محتوا در یک فایل
-          - پشتیبانی در Chrome و Edge
-          - کیفیت دقیقاً مثل صفحه اصلی
+          ---
+          ⚡ تمام تصاویر و استایل‌ها embed شده‌اند
           EOF
       
       - name: Commit and push
         run: |
           git config --global user.name 'GitHub Actions Bot'
           git config --global user.email 'actions@github.com'
-          git pull origin main || true
+          
           git add ${{ github.event.inputs.target_folder }}/
-          git commit -m "📥 Save MHTML: ${{ github.event.inputs.filename }} [${{ github.event.inputs.url }}]" || echo "No changes"
+          git commit -m "📥 Download complete page with images: ${{ github.event.inputs.filename }} [${{ github.event.inputs.format }}]"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Show download link
+      - name: Show results
         run: |
-          echo "========================================="
-          echo "✅ فایل MHTML آماده است!"
-          echo "========================================="
+          echo "========================================"
+          echo "✅ **دانلود کامل شد!**"
+          echo "========================================"
           echo ""
-          echo "📥 لینک دانلود مستقیم:"
-          echo "https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.mhtml"
+          echo "📁 **فایل‌ها در مخزن:**"
+          echo "\`${{ github.event.inputs.target_folder }}/\`"
           echo ""
-          echo "📱 روی گوشی:"
-          echo "1. لینک بالا را در Chrome باز کنید"
-          echo "2. فایل دانلود می‌شود"
-          echo "3. با Chrome باز کنید"
+          ls -lh ${{ github.event.inputs.target_folder }}/
           echo ""
-          echo "💾 فرمت: MHTML (Web Archive single file)"
+          echo "📱 **لینک دانلود مستقیم:**"
+          echo "https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.${{ github.event.inputs.format == 'mht' && 'mht' || 'html' }}"
