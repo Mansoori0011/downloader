@@ -38,30 +38,35 @@ jobs:
           rm -rf web-archive
           mkdir -p web-archive
           
+          cd web-archive
+          
           echo "در حال دانلود: $URL"
           
-          # دانلود
-          npx single-file "$URL" --output web-archive/archive.mht
+          # استفاده از npx بدون --output (مسیر پیش‌فرض)
+          npx single-file "$URL" --filename-template="archive"
           
-          # بررسی وجود فایل
-          if [ -f "web-archive/archive.mht" ]; then
-            echo "✅ فایل MHT با موفقیت ساخته شد"
-            ls -la web-archive/
+          # پیدا کردن فایل ساخته شده
+          FILE=$(ls -t *.html 2>/dev/null | head -1)
+          
+          if [ -n "$FILE" ]; then
+            # تغییر نام به archive.mht
+            mv "$FILE" archive.mht
+            echo "✅ فایل MHT ساخته شد: web-archive/archive.mht"
+            ls -la
           else
             echo "❌ خطا: فایل MHT ساخته نشد"
             exit 1
           fi
+          
+          cd ..
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # اضافه کردن پوشه
           git add web-archive/
-          
-          # Commit و Push
           git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
-          git push origin master || echo "خطا در push"
+          git push origin master
           
           echo "✅ پوشه web-archive در مخزن ذخیره شد"
