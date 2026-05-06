@@ -1,4 +1,4 @@
-name: 🌐 4-Browse the Web
+name: 🌐b
 
 on:
   workflow_dispatch:
@@ -88,7 +88,6 @@ jobs:
               const results = [];
               const seen = new Set();
               
-              // Find all links that look like video pages
               document.querySelectorAll('a').forEach(link => {
                 const href = link.href;
                 const title = link.innerText?.trim() || link.title || '';
@@ -97,30 +96,15 @@ jobs:
                   href.includes('/video/') || 
                   href.includes('/watch') || 
                   href.includes('/v/') ||
-                  href.includes('/view_video.php') ||
-                  href.match(/\/[a-zA-Z0-9]+\?/) ||
-                  href.includes('/embed/')
+                  href.includes('/view_video.php')
                 )) {
                   if (!seen.has(href)) {
                     seen.add(href);
                     results.push({
-                      title: title.substring(0, 100) || 'Untitled',
+                      title: title.substring(0, 100) || 'No title',
                       url: href
                     });
                   }
-                }
-              });
-              
-              // Also check for video containers
-              document.querySelectorAll('[class*="video"], [class*="movie"], .item, .card').forEach(el => {
-                const link = el.querySelector('a');
-                if (link && link.href && !seen.has(link.href)) {
-                  seen.add(link.href);
-                  const titleEl = el.querySelector('h3, h4, .title, [class*="title"]');
-                  results.push({
-                    title: titleEl?.innerText?.trim() || link.innerText?.trim() || 'Video',
-                    url: link.href
-                  });
                 }
               });
               
@@ -128,7 +112,7 @@ jobs:
             });
             
             fs.writeFileSync(outputFile, JSON.stringify(videoLinks, null, 2));
-            console.log(`Extracted ${videoLinks.length} video links`);
+            console.log('Extracted', videoLinks.length, 'video links');
             await browser.close();
           })();
           ENDOFSCRIPT
@@ -137,7 +121,6 @@ jobs:
         run: |
           RAW_URL="${{ github.event.inputs.url }}"
           
-          # Normalize URL: try HTTPS first if no protocol given
           if [[ ! "$RAW_URL" =~ ^https?:// ]]; then
             HTTPS_URL="https://$RAW_URL"
             HTTP_URL="http://$RAW_URL"
@@ -156,9 +139,7 @@ jobs:
           
           echo "Visiting $URL"
 
-          # Extract domain (remove protocol and optional www)
           DOMAIN=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
-          
           SLUG=$(echo "$URL" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c1-100)
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           FOLDER="pages/$DOMAIN/$SLUG/$TIMESTAMP"
@@ -166,24 +147,19 @@ jobs:
           VIDEOS_FOLDER="$FOLDER/video_links"
           mkdir -p "$FOLDER" "$MEDIA_FOLDER" "$VIDEOS_FOLDER"
 
-          # Download HTML
           echo "Downloading page HTML..."
           curl -L -A "Mozilla/5.0" -o "$FOLDER/page.html" "$URL"
 
-          # Take screenshot
           echo "Taking screenshot..."
           node screenshot.js "$URL" "$FOLDER/screenshot.png" && SCREENSHOT_OK=true || SCREENSHOT_OK=false
 
-          # Extract video links from page
           echo "Extracting video links..."
           node extract-videos.js "$URL" "$VIDEOS_FOLDER/video_links.json"
-          
-          # Extract links
-          grep -oP 'href="\K[^"]*' "$FOLDER/page.html" | sort -u > "$FOLDER/all_links.txt"
-          grep -oP 'src="\K[^"]*' "$FOLDER/page.html" | sort -u >> "$FOLDER/all_links.txt"
-          sort -u "$FOLDER/all_links.txt" -o "$FOLDER/all_links.txt"
 
-          # Media types to download
+          grep -oP 'href="\K[^"]*' "$FOLDER/page.html" | sort -u > "$FOLDER/all_links.txt" 2>/dev/null || true
+          grep -oP 'src="\K[^"]*' "$FOLDER/page.html" | sort -u >> "$FOLDER/all_links.txt" 2>/dev/null || true
+          sort -u "$FOLDER/all_links.txt" -o "$FOLDER/all_links.txt" 2>/dev/null || true
+
           MEDIA_EXT="png|jpg|jpeg|gif|svg|webp|bmp|ico|mp3|wav|ogg|flac|aac|mp4|webm|avi|mov|mkv|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|tar|gz|7z"
 
           > "$FOLDER/media_links.txt"
@@ -192,9 +168,7 @@ jobs:
           echo "## Downloaded Media Files" > "$FOLDER/downloaded_media.md"
           echo "" >> "$FOLDER/downloaded_media.md"
 
-          # Base URL for resolving relative links
           BASE_URL="${URL%%/*}"
-          BASE_DOMAIN=$(echo "$URL" | awk -F/ '{print $3}')
 
           while IFS= read -r link; do
             [ -z "$link" ] && continue
@@ -232,17 +206,26 @@ jobs:
             fi
           done < "$FOLDER/all_links.txt"
 
-          # Create video links summary
-          VIDEO_COUNT=$(cat "$VIDEOS_FOLDER/video_links.json" | jq '. | length' 2>/dev/null || echo "0")
+          VIDEO_COUNT=$(cat "$VIDEOS_FOLDER/video_links.json" 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" || echo "0")
+          
           cat > "$VIDEOS_FOLDER/video_links.md" << EOF
           ## 🎬 Extracted Video Links ($VIDEO_COUNT videos)
 
-          | # | Title | URL |
-          |---|-------|-----|
-          $(cat "$VIDEOS_FOLDER/video_links.json" | jq -r 'to_entries[] | "| \(.key+1) | \(.value.title | gsub("\\|"; " ")) | [Link]\(.value.url) |"' 2>/dev/null || echo "| - | No videos found | - |")
           EOF
+          
+          if [ -f "$VIDEOS_FOLDER/video_links.json" ]; then
+            cat "$VIDEOS_FOLDER/video_links.json" | python3 -c "
+import sys,json
+data=json.load(sys.stdin)
+for i,item in enumerate(data):
+    title=item.get('title','No title')[:50]
+    url=item.get('url','')
+    print(f'{i+1}. **{title}**')
+    print(f'   🔗 [Link]({url})')
+    print()
+" >> "$VIDEOS_FOLDER/video_links.md"
+          fi
 
-          # Build index.md
           MEDIA_COUNT=$(find "$MEDIA_FOLDER" -type f 2>/dev/null | wc -l)
           {
             echo "# Visited: $URL"
@@ -274,12 +257,11 @@ jobs:
             fi
             echo ""
             echo "## Stats"
-            echo "- Links: $(wc -l < "$FOLDER/all_links.txt")"
+            echo "- Links: $(wc -l < "$FOLDER/all_links.txt" 2>/dev/null || echo 0)"
             echo "- Media: $MEDIA_COUNT"
             echo "- Video Links: $VIDEO_COUNT"
           } > "$FOLDER/index.md"
 
-          # Update history in browse.md
           BROWSE_FILE="browse.md"
           if [ ! -f "$BROWSE_FILE" ]; then
             echo "# Browsed Websites" > "$BROWSE_FILE"
@@ -287,7 +269,6 @@ jobs:
           fi
           echo "- [${SLUG} (${TIMESTAMP})]($FOLDER/index.md) — $MEDIA_COUNT media, $VIDEO_COUNT video links" >> "$BROWSE_FILE"
 
-          # Save variables for zip step
           echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
           echo "SLUG=$SLUG" >> $GITHUB_ENV
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
@@ -303,7 +284,7 @@ jobs:
       - name: Commit and push
         run: |
           git config user.name "github-actions"
-          git config.user.email "github-actions@github.com"
+          git config user.email "github-actions@github.com"
           git add pages/ browse.md
           if git diff --staged --quiet; then
             echo "Nothing to commit"
