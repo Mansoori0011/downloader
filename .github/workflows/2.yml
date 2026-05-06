@@ -1,0 +1,367 @@
+name: 🎬 استخراج فیلم، اسکرین‌شات و تولید فایل پویا
+
+on:
+  workflow_dispatch:
+    inputs:
+      page_url:
+        description: 'آدرس صفحه (مثل صفحه اصلی یا صفحه دسته‌بندی)'
+        required: true
+        type: string
+        default: 'https://www.example.com'
+      screenshot_quality:
+        description: 'کیفیت اسکرین‌شات (full یا thumbnail)'
+        required: false
+        type: choice
+        options:
+          - full
+          - thumbnail
+        default: 'full'
+
+jobs:
+  extract-and-download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: نصب ابزارهای مورد نیاز
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip jq
+          pip3 install yt-dlp
+          npm init -y
+          npm install puppeteer
+
+      - name: ساخت اسکریپت استخراج لینک‌ها
+        run: |
+          cat > extract.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          
+          (async () => {
+            const url = process.argv[2];
+            const outputFile = process.argv[3];
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            
+            const page = await browser.newPage();
+            
+            const videoUrls = new Set();
+            const pageVideoLinks = [];
+            
+            page.on('request', request => {
+              const requestUrl = request.url();
+              if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
+                  requestUrl.match(/\/video\//i) ||
+                  requestUrl.match(/\/get_file\//i) ||
+                  requestUrl.match(/\/hls\//i) ||
+                  requestUrl.match(/\/view_video\.php/i)) {
+                videoUrls.add(requestUrl);
+              }
+            });
+            
+            console.log('Loading page:', url);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            
+            console.log('Scrolling page...');
+            for (let i = 0; i < 5; i++) {
+              await page.evaluate(() => {
+                window.scrollBy(0, window.innerHeight);
+              });
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            const links = await page.$$eval('a', (elements) => {
+              const results = [];
+              elements.forEach(a => {
+                const href = a.href;
+                if (href && (href.includes('/view_video.php') || 
+                    href.includes('/video/') || 
+                    href.includes('/watch') ||
+                    href.includes('/v/'))) {
+                  results.push({
+                    url: href,
+                    title: a.innerText?.trim() || a.title || 'بدون عنوان'
+                  });
+                }
+              });
+              return results;
+            });
+            
+            links.forEach(link => pageVideoLinks.push(link));
+            await browser.close();
+            
+            const result = {
+              sourceUrl: url,
+              timestamp: new Date().toISOString(),
+              networkVideoUrls: Array.from(videoUrls),
+              pageVideoLinks: pageVideoLinks
+            };
+            
+            fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
+            console.log('Found:', pageVideoLinks.length, 'video links');
+          })().catch(err => {
+            console.error('Error:', err.message);
+            process.exit(1);
+          });
+          EOF
+
+      - name: اجرای اسکریپت و استخراج لینک‌ها
+        run: |
+          PAGE_URL="${{ github.event.inputs.page_url }}"
+          
+          # حذف پوشه قبلی اگر وجود داشته باشد
+          rm -rf file 2>/dev/null || true
+          mkdir -p file/screenshots
+          
+          echo "در حال استخراج لینک‌ها از: $PAGE_URL"
+          node extract.js "$PAGE_URL" "file/extracted_links.json"
+          
+          # استخراج اطلاعات فیلم‌ها با yt-dlp
+          echo "در حال دریافت اطلاعات فیلم‌ها..."
+          echo "[" > "file/videos_info.json"
+          
+          TOTAL_VIDEOS=$(cat "file/extracted_links.json" | jq -r '.pageVideoLinks | length')
+          echo "تعداد فیلم‌های پیدا شده: $TOTAL_VIDEOS"
+          
+          COUNTER=0
+          while IFS= read -r url; do
+            COUNTER=$((COUNTER + 1))
+            echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL_VIDEOS..."
+            
+            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null || echo "فیلم $COUNTER")
+            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null || echo "نامشخص")
+            THUMBNAIL=$(yt-dlp --get-thumbnail "$url" 2>/dev/null || echo "")
+            
+            FORMATS=$(yt-dlp -F "$url" 2>/dev/null | grep -E '^[0-9]+' | awk '{print $2}' | grep -E '[0-9]+p' | sort -u | tr '\n' ',' | sed 's/,$//')
+            if [ -z "$FORMATS" ]; then
+              FORMATS="best"
+            fi
+            
+            cat >> "file/videos_info.json" << EOF
+            {
+              "index": $COUNTER,
+              "title": "$TITLE",
+              "url": "$url",
+              "duration": "$DURATION",
+              "thumbnail": "$THUMBNAIL",
+              "qualities": "$FORMATS"
+            },
+            EOF
+          done < <(cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | .url')
+          
+          sed -i '$ s/,$//' "file/videos_info.json"
+          echo "]" >> "file/videos_info.json"
+          
+          echo "═══════════════════════════════════════════════════════════" > "file/video_list.txt"
+          echo "لیست فیلم‌های پیدا شده" >> "file/video_list.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "file/video_list.txt"
+          echo "" >> "file/video_list.txt"
+          
+          for i in $(seq 1 $TOTAL_VIDEOS); do
+            TITLE=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].title")
+            URL=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].url")
+            echo "[$i] $TITLE" >> "file/video_list.txt"
+            echo "    لینک: $URL" >> "file/video_list.txt"
+            echo "" >> "file/video_list.txt"
+          done
+
+      - name: گرفتن اسکرین‌شات (جایگزینی)
+        run: |
+          PAGE_URL="${{ github.event.inputs.page_url }}"
+          QUALITY="${{ github.event.inputs.screenshot_quality }}"
+          
+          cat > screenshot.js << 'JSEOF'
+          const puppeteer = require('puppeteer');
+          const url = process.argv[2];
+          const output = process.argv[3];
+          (async () => {
+              const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+              const page = await browser.newPage();
+              await page.setViewport({ width: 1280, height: 720 });
+              await page.goto(url, { waitUntil: 'networkidle2' });
+              if (process.argv[4] === 'full') {
+                  await page.screenshot({ path: output, fullPage: true });
+              } else {
+                  await page.screenshot({ path: output });
+              }
+              await browser.close();
+          })();
+          JSEOF
+          
+          # حذف اسکرین‌شات قبلی
+          rm -f "file/screenshots/fullpage.png" 2>/dev/null
+          rm -f "file/screenshots/thumbnail.png" 2>/dev/null
+          
+          # گرفتن اسکرین‌شات جدید
+          if [ "$QUALITY" = "full" ]; then
+            node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png" "full"
+            echo "✅ اسکرین‌شات کامل جایگزین شد"
+          else
+            node screenshot.js "$PAGE_URL" "file/screenshots/thumbnail.png"
+            echo "✅ اسکرین‌شات بندانگشتی جایگزین شد"
+          fi
+
+      - name: ایجاد فایل YAML پویا برای دانلود فیلم‌ها
+        run: |
+          TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length')
+          
+          cat > .github/workflows/download-selected-video.yml << 'WFEOF'
+          name: 📥 دانلود فیلم انتخابی با کیفیت دلخواه
+          
+          on:
+            workflow_dispatch:
+              inputs:
+                video_index:
+                  description: 'شماره فیلم مورد نظر'
+                  required: true
+                  type: choice
+                  options:
+          WFEOF
+          
+          for i in $(seq 1 $TOTAL_VIDEOS); do
+            TITLE=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].title" | cut -c1-50)
+            echo "                    - '$i - $TITLE'" >> .github/workflows/download-selected-video.yml
+          done
+          
+          cat >> .github/workflows/download-selected-video.yml << 'WFEOF'
+                quality:
+                  description: 'کیفیت مورد نظر'
+                  required: true
+                  type: choice
+                  options:
+                    - 'best'
+                    - 'worst'
+                    - '1080p'
+                    - '720p'
+                    - '480p'
+                    - '360p'
+            
+            jobs:
+              download:
+                runs-on: ubuntu-latest
+                permissions:
+                  contents: write
+                steps:
+                  - uses: actions/checkout@v4
+                  
+                  - name: نصب yt-dlp
+                    run: pip3 install yt-dlp
+                  
+                  - name: دریافت اطلاعات فیلم انتخاب شده
+                    run: |
+                      VIDEO_INFO=$(cat "file/videos_info.json")
+                      INDEX="${{ github.event.inputs.video_index }}"
+                      VIDEO_NUMBER=$(echo "$INDEX" | cut -d' ' -f1)
+                      VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((VIDEO_NUMBER-1))].url")
+                      VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((VIDEO_NUMBER-1))].title")
+                      QUALITY="${{ github.event.inputs.quality }}"
+                      
+                      echo "═══════════════════════════════════════════════════════════"
+                      echo "🎬 در حال دانلود فیلم شماره $VIDEO_NUMBER"
+                      echo "📌 عنوان: $VIDEO_TITLE"
+                      echo "🔗 لینک: $VIDEO_URL"
+                      echo "🎚️ کیفیت: $QUALITY"
+                      echo "═══════════════════════════════════════════════════════════"
+                      
+                      mkdir -p downloaded_videos
+                      
+                      if [ "$QUALITY" = "best" ]; then
+                        yt-dlp -f best -o "downloaded_videos/video_${VIDEO_NUMBER}.mp4" "$VIDEO_URL"
+                      elif [ "$QUALITY" = "worst" ]; then
+                        yt-dlp -f worst -o "downloaded_videos/video_${VIDEO_NUMBER}.mp4" "$VIDEO_URL"
+                      else
+                        RESOLUTION=$(echo "$QUALITY" | sed 's/p//')
+                        yt-dlp -f "best[height<=$RESOLUTION]" -o "downloaded_videos/video_${VIDEO_NUMBER}.mp4" "$VIDEO_URL"
+                      fi
+                      
+                      echo "✅ دانلود کامل شد!"
+                  
+                  - name: ذخیره در مخزن
+                    run: |
+                      git config user.name "github-actions"
+                      git config user.email "actions@github.com"
+                      git add downloaded_videos/
+                      git commit -m "دانلود فیلم انتخاب شده" || echo "تغییری وجود ندارد"
+                      git push || echo "خطا در ارسال"
+                  
+                  - name: آپلود فایل
+                    uses: actions/upload-artifact@v4
+                    with:
+                      name: downloaded-video
+                      path: downloaded_videos/
+          WFEOF
+          
+          echo "✅ فایل پویا ایجاد شد: .github/workflows/download-selected-video.yml"
+
+      - name: ایجاد فایل README اصلی
+        run: |
+          TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length')
+          
+          cat > "file/README.md" << EOL
+          # 🎬 نتایج استخراج فیلم‌ها
+  
+          - **آدرس صفحه**: ${{ github.event.inputs.page_url }}
+          - **تاریخ**: $(date)
+          - **تعداد فیلم‌های پیدا شده**: $TOTAL_VIDEOS
+  
+          ## 📸 اسکرین‌شات صفحه
+  
+          ![اسکرین‌شات](./screenshots/${{ github.event.inputs.screenshot_quality == 'full' && 'fullpage.png' || 'thumbnail.png' }})
+  
+          ## 🎥 لیست فیلم‌ها
+  
+          | شماره | عنوان | مدت | کیفیت‌های موجود |
+          |-------|-------|------|-----------------|
+          $(for i in $(seq 1 $TOTAL_VIDEOS); do
+            TITLE=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].title" | head -c 50)
+            DURATION=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].duration")
+            QUALITIES=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].qualities")
+            echo "| $i | $TITLE | $DURATION | $QUALITIES |"
+          done)
+  
+          ## 📥 نحوه دانلود
+  
+          1. به تب **Actions** بروید
+          2. روی **"📥 دانلود فیلم انتخابی با کیفیت دلخواه"** کلیک کنید
+          3. شماره فیلم را انتخاب کنید
+          4. کیفیت مورد نظر را انتخاب کنید
+          5. **Run workflow** را بزنید
+  
+          ---
+          *تاریخ آخرین بروزرسانی: $(date)*
+          EOL
+
+      - name: ذخیره همه فایل‌ها در مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add file/
+          git add .github/workflows/download-selected-video.yml
+          git commit -m "بروزرسانی: استخراج فیلم‌ها از ${{ github.event.inputs.page_url }}" || echo "تغییری وجود ندارد"
+          git push || echo "خطا در ارسال"
+
+      - name: نمایش نتایج نهایی
+        run: |
+          TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length')
+          
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ استخراج با موفقیت انجام شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "📁 پوشه نتایج: file/"
+          echo "🎬 تعداد فیلم‌ها: $TOTAL_VIDEOS"
+          echo "📸 اسکرین‌شات: file/screenshots/"
+          echo ""
+          echo "📥 برای دانلود فیلم‌ها:"
+          echo "   1. به تب Actions بروید"
+          echo "   2. روی '📥 دانلود فیلم انتخابی با کیفیت دلخواه' کلیک کنید"
+          echo "   3. شماره فیلم و کیفیت را انتخاب کنید"
+          echo "   4. Run workflow را بزنید"
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
