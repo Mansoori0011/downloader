@@ -94,47 +94,15 @@ jobs:
           cat output/extracted_links.json | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> output/video_links.txt
           cat output/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > output/video_pages.txt
 
-      - name: دریافت اطلاعات فیلم (5 ترد همزمان - پایدار)
+      - name: دریافت اطلاعات فیلم (فوق سریع با yt-dlp گروهی)
         run: |
           cd output
+          
           TOTAL=$(cat video_pages.txt | wc -l)
-          echo "در حال دریافت اطلاعات $TOTAL فیلم با 5 ترد همزمان..."
+          echo "در حال دریافت اطلاعات $TOTAL فیلم..."
           
-          rm -f videos_info.json videos_info_part_*.json
-          
-          # تقسیم فایل به 5 قسمت
-          split -n l/5 -d video_pages.txt video_pages_part_
-          
-          # پردازش همزمان هر قسمت
-          for part in video_pages_part_*; do
-            (
-              part_num=$(echo "$part" | sed 's/video_pages_part_//')
-              while IFS= read -r url; do
-                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
-                DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
-                TITLE=${TITLE:-"فیلم"}
-                DURATION=${DURATION:-"نامشخص"}
-                echo "{\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}" >> videos_info_part_$part_num.json
-              done < "$part"
-            ) &
-          done
-          
-          wait
-          
-          # ترکیب نتایج و اضافه کردن شماره سریال
-          echo "[" > videos_info.json
-          INDEX=1
-          for f in $(ls videos_info_part_*.json 2>/dev/null | sort); do
-            while IFS= read -r line; do
-              echo "  {\"index\":$INDEX, $line" >> videos_info.json
-              INDEX=$((INDEX + 1))
-            done < "$f"
-            echo "," >> videos_info.json
-          done
-          sed -i '$ s/,$//' videos_info.json
-          echo "]" >> videos_info.json
-          
-          rm -f videos_info_part_*.json video_pages_part_*
+          # yt-dlp همه لینک‌ها را یکجا پردازش می‌کند (خیلی سریع)
+          yt-dlp --dump-json --batch-file video_pages.txt 2>/dev/null | jq -c '{title, webpage_url, duration}' | nl -v 1 -w1 -s',' | sed 's/^/  {"index":/' | sed 's/,/, /' | jq -s '.' > videos_info.json
           
           COUNT=$(cat videos_info.json | jq '. | length')
           echo "✅ اطلاعات $COUNT فیلم دریافت شد"
@@ -197,7 +165,7 @@ jobs:
                   run: |
                     VIDEO_INFO=\$(cat output/videos_info.json)
                     V_NUM="\${{ github.event.inputs.video_number }}"
-                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].url")
+                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].webpage_url")
                     VIDEO_TITLE=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].title")
                     echo "در حال دانلود: \$VIDEO_TITLE"
                     yt-dlp -f best -o "video_\${V_NUM}.mp4" "\$VIDEO_URL"
