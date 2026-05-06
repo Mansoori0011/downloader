@@ -1,0 +1,64 @@
+name: Download Website as MHT Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'آدرس سایت مورد نظر (مثال: https://example.com)'
+        required: true
+        type: string
+
+jobs:
+  create-archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: نصب ابزارهای مورد نیاز
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl unzip
+          # نصب کتابخانه‌های پایتون برای تبدیل
+          pip install mhtml
+
+      - name: دانلود و ساخت فایل MHT
+        run: |
+          URL="${{ github.event.inputs.target_url }}"
+          
+          # 1. ساخت پوشه ثابت (اگر قبلاً وجود داشته باشد، پاک می‌شود)
+          rm -rf web-archive
+          mkdir -p web-archive
+
+          # 2. دانلود صفحه با wget (برای دریافت کامل فایل‌های جانبی)
+          echo "در حال دانلود صفحه: $URL"
+          wget --recursive --page-requisites --convert-links --adjust-extension \
+               --no-parent --directory-prefix=web-archive/temp "$URL"
+
+          # 3. تبدیل صفحه اصلی به فرمت MHT
+          # پیدا کردن فایل اصلی HTML دانلود شده
+          MAIN_FILE=$(find web-archive/temp -name "*.html" | head -1)
+          if [ -f "$MAIN_FILE" ]; then
+            python3 -c "
+import mhtml
+with open('web-archive/archive.mht', 'wb') as out_f:
+    with open('$MAIN_FILE', 'rb') as in_f:
+        out_f.write(mhtml.document(in_f.read()).serialize())
+"
+            echo "✅ فایل MHT با موفقیت در web-archive/archive.mht ذخیره شد"
+          else
+            echo "❌ خطا: فایل HTML اصلی پیدا نشد"
+            exit 1
+          fi
+
+          # 4. حذف فایل‌های موقت
+          rm -rf web-archive/temp
+
+      - name: ارسال به مخزن گیت‌هاب
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add web-archive/
+          git commit -m "📦 به‌روزرسانی آرشیو MHT از ${{ github.event.inputs.target_url }}" || echo "تغییری وجود ندارد"
+          git push
