@@ -1,54 +1,66 @@
-name: دانلود کامل صفحه وب
+name: Download Page and Save to Custom Folder
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت'
+        description: 'آدرس صفحه سایت'
         required: true
-        type: string
+        default: 'https://example.com'
+      filename:
+        description: 'نام فایل خروجی (بدون پسوند)'
+        required: true
+        default: 'offline-page'
+      target_folder:
+        description: 'نام پوشه برای ذخیره'
+        required: true
+        default: 'saved-pages'
 
 jobs:
-  download:
+  download-and-save:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-
-      - name: نصب wget
-        run: sudo apt-get install -y wget
-
-      - name: دانلود کامل صفحه
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install monolith
         run: |
-          URL="${{ github.event.inputs.url }}"
-          SITE_NAME=$(echo "$URL" | awk -F/ '{print $3}')
+          wget https://github.com/Y2Z/monolith/releases/download/v2.8.3/monolith-gnu-linux-x86_64 -O monolith
+          chmod +x monolith
+          sudo mv monolith /usr/local/bin/
+      
+      - name: Create folder and download page
+        run: |
+          # ایجاد پوشه جدید
+          mkdir -p ${{ github.event.inputs.target_folder }}
           
-          rm -rf "offline-$SITE_NAME"
-          mkdir -p "offline-$SITE_NAME"
+          # دانلود صفحه به صورت فایل HTML تکی
+          monolith ${{ github.event.inputs.url }} \
+            --no-audio \
+            --no-video \
+            --no-fonts \
+            --isolate \
+            --output ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
           
-          cd "offline-$SITE_NAME"
+          # نمایش اطلاعات فایل
+          echo "✅ صفحه با موفقیت دانلود شد"
+          echo "📁 مسیر: ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html"
+          echo "📦 حجم فایل:"
+          ls -lh ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+      
+      - name: Commit and push to repository
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
           
-          wget --page-requisites \
-               --convert-links \
-               --adjust-extension \
-               --no-parent \
-               --user-agent="Mozilla/5.0" \
-               -r -l 1 "$URL"
-          
-          cd ..
-          
-          # ایجاد فایل ZIP برای دانلود
-          zip -r "site-backup.zip" "offline-$SITE_NAME"
-          
-          echo "✅ دانلود کامل شد"
-
-      - name: آپلود Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-site
-          path: |
-            offline-*/
-            site-backup.zip
+          git add ${{ github.event.inputs.target_folder }}/
+          git commit -m "📥 Add offline page: ${{ github.event.inputs.filename }}.html from ${{ github.event.inputs.url }}"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Show download link
+        run: |
+          echo "🔗 لینک دانلود مستقیم:"
+          echo "https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html"
