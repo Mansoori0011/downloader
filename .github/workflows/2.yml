@@ -9,10 +9,10 @@ on:
         type: string
         default: 'https://www.example.com'
       max_videos:
-        description: 'حداکثر تعداد فیلم برای استخراج (پیش‌فرض: 10)'
+        description: 'حداکثر تعداد فیلم برای استخراج اطلاعات (پیش‌فرض: 20)'
         required: false
         type: string
-        default: '10'
+        default: '20'
 
 jobs:
   extract-all:
@@ -82,34 +82,42 @@ jobs:
         run: |
           PAGE_URL="${{ github.event.inputs.page_url }}"
           MAX_VIDEOS="${{ github.event.inputs.max_videos }}"
+          
           rm -rf output || true
           mkdir -p output/screenshots
           echo "در حال استخراج لینک از: $PAGE_URL"
           node extract.js "$PAGE_URL" "output/extracted_links.json"
           
           TOTAL_FOUND=$(cat output/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
-          echo "تعداد فیلم‌های پیدا شده: $TOTAL_FOUND"
+          echo "تعداد کل فیلم‌های پیدا شده: $TOTAL_FOUND"
           
-          # محدود کردن به تعداد دلخواه
-          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$MAX_VIDEOS] | .[] | .url" 2>/dev/null > output/video_pages.txt
-          LIMITED_COUNT=$(cat output/video_pages.txt | wc -l)
-          echo "تعداد فیلم‌های انتخاب شده برای پردازش: $LIMITED_COUNT"
+          # محدود کردن تعداد فیلم‌ها بر اساس ورودی کاربر
+          if [ "$MAX_VIDEOS" -lt "$TOTAL_FOUND" ] 2>/dev/null; then
+            SELECTED_COUNT=$MAX_VIDEOS
+            echo "با توجه به درخواست شما، فقط $SELECTED_COUNT فیلم اول پردازش می‌شود"
+          else
+            SELECTED_COUNT=$TOTAL_FOUND
+          fi
+          
+          # ذخیره لینک‌های محدود شده
+          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$SELECTED_COUNT] | .[] | .url" > output/video_pages.txt
           
           echo "═══════════════════════════════════════════════════════════" > output/video_links.txt
           echo "لیست لینک‌های فیلم" >> output/video_links.txt
           echo "آدرس: $PAGE_URL" >> output/video_links.txt
           echo "تاریخ: $(date)" >> output/video_links.txt
-          echo "تعداد: $LIMITED_COUNT از $TOTAL_FOUND" >> output/video_links.txt
+          echo "تعداد فیلم‌های انتخاب شده: $SELECTED_COUNT" >> output/video_links.txt
           echo "═══════════════════════════════════════════════════════════" >> output/video_links.txt
           echo "" >> output/video_links.txt
           
-          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$MAX_VIDEOS] | .[] | \"عنوان: \" + .title + \"\nلینک: \" + .url + \"\n---\"" 2>/dev/null >> output/video_links.txt
+          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$SELECTED_COUNT] | .[] | \"عنوان: \" + .title + \"\nلینک: \" + .url + \"\n---\"" 2>/dev/null >> output/video_links.txt
 
-      - name: دریافت اطلاعات فیلم (تکی و پایدار)
+      - name: دریافت اطلاعات فیلم (دریافت جداگانه و پایدار)
         run: |
           cd output
+          
           TOTAL=$(cat video_pages.txt | wc -l)
-          echo "در حال دریافت اطلاعات $TOTAL فیلم (تکی و پایدار)..."
+          echo "در حال دریافت اطلاعات $TOTAL فیلم..."
           
           echo "[" > videos_info.json
           COUNTER=0
