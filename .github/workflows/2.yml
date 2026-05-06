@@ -1,0 +1,65 @@
+name: 🌐 Chrome Tunnel with Cloudflare
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: نصب Chrome و Cloudflared
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl
+          
+          # نصب کروم
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
+          # نصب cloudflared
+          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+      - name: راه‌اندازی Chrome
+        run: |
+          google-chrome-stable \
+            --headless=new \
+            --remote-debugging-port=9222 \
+            --no-sandbox \
+            --disable-dev-shm-usage \
+            --disable-gpu &
+          
+          sleep 5
+          echo "✅ Chrome running on port 9222"
+
+      - name: راه‌اندازی Cloudflare Tunnel
+        run: |
+          # اجرای تونل
+          cloudflared tunnel --url http://localhost:9222 &
+          
+          sleep 10
+          
+          # گرفتن آدرس
+          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[0].public_url' 2>/dev/null || echo "")
+          
+          if [ -n "$TUNNEL_URL" ]; then
+            echo "═══════════════════════════════════════════════════════════"
+            echo "✅ تونل فعال شد!"
+            echo "═══════════════════════════════════════════════════════════"
+            echo "🔗 آدرس کروم دیباگ: $TUNNEL_URL"
+            echo ""
+            echo "📌 می‌تونی از این آدرس استفاده کنی:"
+            echo "   $TUNNEL_URL/json/version"
+            echo "═══════════════════════════════════════════════════════════"
+          else
+            echo "⚠️ خطا در دریافت آدرس تونل"
+            echo "آدرس معمولاً شبیه اینه: https://xxx-xx-xx-xx.trycloudflare.com"
+          fi
+          
+          # نگهداری تونل
+          while true; do sleep 60; done
