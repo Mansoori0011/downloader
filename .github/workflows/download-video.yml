@@ -1,4 +1,4 @@
-name: دانلود فیلم انتخابی
+name: conf_2
 
 on:
   workflow_dispatch:
@@ -7,10 +7,24 @@ on:
         description: 'شماره فیلم مورد نظر'
         required: true
         type: string
+      quality:
+        description: 'کیفیت مورد نظر'
+        required: true
+        type: choice
+        default: 'best'
+        options:
+          - 'best'
+          - '1080p'
+          - '720p'
+          - '480p'
+          - '360p'
+          - 'mp3 (فقط صدا)'
 
 jobs:
   download:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       
@@ -34,6 +48,8 @@ jobs:
           fi
           
           V_NUM="${{ github.event.inputs.video_number }}"
+          QUALITY="${{ github.event.inputs.quality }}"
+          
           VIDEO_URL=$(echo "$VIDEO_URLS" | sed -n "${V_NUM}p")
           VIDEO_TITLE=$(cat output/extracted_links.json | jq -r ".pageVideoLinks[$((V_NUM-1))].title")
           
@@ -48,14 +64,53 @@ jobs:
           echo "🎬 در حال دانلود فیلم شماره $V_NUM از $TOTAL"
           echo "📌 عنوان: ${VIDEO_TITLE:-بدون عنوان}"
           echo "🔗 لینک: $VIDEO_URL"
+          echo "🎚️ کیفیت: $QUALITY"
           echo "═══════════════════════════════════════════════════════════"
           
-          yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+          # انتخاب کیفیت
+          case "$QUALITY" in
+            "best")
+              yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              ;;
+            "1080p")
+              yt-dlp -f "best[height<=1080]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              ;;
+            "720p")
+              yt-dlp -f "best[height<=720]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              ;;
+            "480p")
+              yt-dlp -f "best[height<=480]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              ;;
+            "360p")
+              yt-dlp -f "best[height<=360]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              ;;
+            "mp3 (فقط صدا)")
+              yt-dlp -x --audio-format mp3 -o "audio_${V_NUM}.mp3" "$VIDEO_URL"
+              ;;
+          esac
           
-          echo "✅ دانلود کامل شد: video_${V_NUM}.mp4"
+          echo "✅ دانلود کامل شد"
       
-      - name: آپلود فایل
+      - name: ذخیره در مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # افزودن فایل دانلود شده
+          git add *.mp4 *.mp3 2>/dev/null || true
+          
+          if git diff --staged --quiet; then
+            echo "هیچ تغییر جدیدی برای commit وجود ندارد"
+          else
+            git commit -m "دانلود فیلم شماره ${{ github.event.inputs.video_number }} با کیفیت ${{ github.event.inputs.quality }}"
+            git push
+            echo "✅ فایل در مخزن ذخیره شد"
+          fi
+      
+      - name: آپلود به عنوان Artifact (پشتیبان)
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
-          path: video_*.mp4
+          path: |
+            *.mp4
+            *.mp3
