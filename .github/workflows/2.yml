@@ -23,7 +23,7 @@ jobs:
       - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip jq parallel
+          sudo apt-get install -y python3-pip jq
           pip3 install yt-dlp
           npm init -y
           npm install puppeteer
@@ -93,33 +93,32 @@ jobs:
           cat file/extracted_links.json | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> file/video_links.txt
           cat file/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > file/video_pages.txt
 
-      - name: دریافت اطلاعات فیلم (حلقه ساده با پیشرفت)
-  run: |
-    cd file
-    TOTAL=$(cat video_pages.txt | wc -l)
-    echo "در حال دریافت اطلاعات $TOTAL فیلم..."
-    
-    echo "[" > videos_info.json
-    COUNTER=0
-    while IFS= read -r url; do
-      COUNTER=$((COUNTER + 1))
-      echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL"
-      
-      TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
-      DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
-      TITLE=${TITLE:-"فیلم $COUNTER"}
-      DURATION=${DURATION:-"نامشخص"}
-      
-      echo "  {\"index\":$COUNTER,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}," >> videos_info.json
-    done < video_pages.txt
-    
-    # حذف کامای آخر و بستن JSON
-    sed -i '$ s/,$//' videos_info.json
-    echo "]" >> videos_info.json
-    
-    COUNT=$(cat videos_info.json | jq '. | length')
-    echo "✅ اطلاعات $COUNT فیلم دریافت شد"
-    cd ..
+      - name: دریافت اطلاعات فیلم (ساده و پایدار)
+        run: |
+          cd file
+          TOTAL=$(cat video_pages.txt | wc -l)
+          echo "در حال دریافت اطلاعات $TOTAL فیلم..."
+          
+          echo "[" > videos_info.json
+          COUNTER=0
+          while IFS= read -r url; do
+            COUNTER=$((COUNTER + 1))
+            echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL"
+            
+            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
+            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
+            TITLE=${TITLE:-"فیلم $COUNTER"}
+            DURATION=${DURATION:-"نامشخص"}
+            
+            echo "  {\"index\":$COUNTER,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}," >> videos_info.json
+          done < video_pages.txt
+          
+          sed -i '$ s/,$//' videos_info.json
+          echo "]" >> videos_info.json
+          
+          COUNT=$(cat videos_info.json | jq '. | length')
+          echo "✅ اطلاعات $COUNT فیلم دریافت شد"
+          cd ..
 
       - name: گرفتن اسکرین‌شات
         run: |
@@ -156,13 +155,13 @@ jobs:
         run: |
           TOTAL_VIDEOS=$(cat file/videos_info.json | jq '. | length' 2>/dev/null || echo "0")
           mkdir -p .github/workflows
-          cat > .github/workflows/download-video.yml << 'YEOF'
+          cat > .github/workflows/download-video.yml << YEOF
           name: دانلود فیلم انتخابی
           on:
             workflow_dispatch:
               inputs:
                 video_number:
-                  description: 'شماره فیلم (1 تا TOTAL)'
+                  description: 'شماره فیلم (1 تا $TOTAL_VIDEOS)'
                   required: true
                   type: string
           jobs:
@@ -176,53 +175,50 @@ jobs:
                   run: pip3 install yt-dlp
                 - name: دانلود فیلم
                   run: |
-                    VIDEO_INFO=$(cat file/videos_info.json)
-                    V_NUM="${{ github.event.inputs.video_number }}"
-                    VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].url")
-                    VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].title")
-                    echo "در حال دانلود: $VIDEO_TITLE"
-                    yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+                    VIDEO_INFO=\$(cat file/videos_info.json)
+                    V_NUM="\${{ github.event.inputs.video_number }}"
+                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].url")
+                    VIDEO_TITLE=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].title")
+                    echo "در حال دانلود: \$VIDEO_TITLE"
+                    yt-dlp -f best -o "video_\${V_NUM}.mp4" "\$VIDEO_URL"
                 - name: آپلود فایل
                   uses: actions/upload-artifact@v4
                   with:
                     name: downloaded-video
                     path: video_*.mp4
           YEOF
-          # جایگزینی TOTAL با مقدار واقعی
-          sed -i "s/TOTAL/$TOTAL_VIDEOS/g" .github/workflows/download-video.yml
           echo "فایل پویا ساخته شد"
 
-      - name: ذخیره در مخزن (اصلاح شده)
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # دریافت آخرین تغییرات
-          echo "دریافت آخرین تغییرات از مخزن..."
           git pull origin ${{ github.ref_name }} --rebase || true
-          
-          # اضافه کردن فایل‌ها
           git add file/ .github/workflows/download-video.yml
           
-          # بررسی وجود تغییر
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
             
-            # تلاش برای push با چندبار تکرار
             for i in 1 2 3; do
               echo "تلاش $i برای push..."
               if git push origin HEAD:${{ github.ref_name }}; then
                 echo "✅ فایل‌ها با موفقیت ذخیره شدند"
                 break
               else
-                echo "تلاش $i ناموفق، در حال دریافت تغییرات جدید..."
                 git pull origin ${{ github.ref_name }} --rebase
                 sleep 3
               fi
             done
           fi
+
+      - name: آپلود به عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-video-links
+          path: file/
 
       - name: نمایش نتایج
         run: |
@@ -235,9 +231,3 @@ jobs:
           echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
           echo "📸 اسکرین‌شات: file/screenshots/fullpage.png"
           echo "═══════════════════════════════════════════════════════════"
-
-      - name: آپلود به عنوان Artifact (پشتیبان)
-        uses: actions/upload-artifact@v4
-        with:
-          name: extracted-video-links
-          path: file/
