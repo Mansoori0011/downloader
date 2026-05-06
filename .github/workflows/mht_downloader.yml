@@ -1,12 +1,17 @@
-name: Download as MHT and Update
+name: Download Website as MHT
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت مورد نظر'
+        description: 'آدرس سایت (مثال: https://example.com)'
         required: true
         type: string
+      filename:
+        description: 'نام فایل (بدون پسوند)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   mht:
@@ -17,48 +22,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: master
-          persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: نصب Node.js و SingleFile
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: نصب SingleFile
+      - name: نصب ابزارها
         run: |
-          npm install -g single-file-cli
-          npx playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y wget curl
+          
+          # نصب monolith برای ساخت فایل یکپارچه
+          wget https://github.com/Y2Z/monolith/releases/latest/download/monolith-linux-amd64
+          chmod +x monolith-linux-amd64
+          sudo mv monolith-linux-amd64 /usr/local/bin/monolith
 
       - name: دانلود به صورت MHT
         run: |
           URL="${{ github.event.inputs.url }}"
+          USER_NAME="${{ github.event.inputs.filename }}"
+          
+          # اگر نام فایل وارد نشده، از نام دامنه استفاده کن
+          if [ -z "$USER_NAME" ]; then
+            FILENAME=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
+          else
+            FILENAME="$USER_NAME"
+          fi
           
           # حذف و ساخت مجدد پوشه
           rm -rf web-archive
           mkdir -p web-archive
           
-          cd web-archive
-          
           echo "در حال دانلود: $URL"
+          echo "نام فایل: ${FILENAME}.mht"
           
-          # استفاده از npx بدون --output (مسیر پیش‌فرض)
-          npx single-file "$URL" --filename-template="archive"
+          # ساخت فایل MHT با monolith
+          monolith "$URL" -o "web-archive/${FILENAME}.mht"
           
-          # پیدا کردن فایل ساخته شده
-          FILE=$(ls -t *.html 2>/dev/null | head -1)
-          
-          if [ -n "$FILE" ]; then
-            # تغییر نام به archive.mht
-            mv "$FILE" archive.mht
-            echo "✅ فایل MHT ساخته شد: web-archive/archive.mht"
-            ls -la
-          else
-            echo "❌ خطا: فایل MHT ساخته نشد"
-            exit 1
-          fi
-          
-          cd ..
+          echo "✅ فایل MHT در web-archive/${FILENAME}.mht ذخیره شد"
 
       - name: ذخیره در مخزن
         run: |
@@ -66,7 +63,7 @@ jobs:
           git config user.email "actions@github.com"
           
           git add web-archive/
-          git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git commit -m "دانلود MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
           git push origin master
           
-          echo "✅ پوشه web-archive در مخزن ذخیره شد"
+          echo "✅ فایل در مخزن ذخیره شد"
