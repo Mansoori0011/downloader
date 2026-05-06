@@ -1,67 +1,56 @@
-name: Tunnel & VPS-like Service
+name: Tunnel with Proper Service
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'نوع سرویس (tunnel یا webserver)'
+      service_type:
+        description: 'نوع سرویس (web یا socks)'
         required: true
         type: choice
+        default: 'web'
         options:
-          - tunnel
-          - webserver
-      port:
-        description: 'پورت مورد نظر (مثال: 8080)'
-        required: false
-        type: string
-        default: '8080'
+          - web
+          - socks
 
 jobs:
-  run-service:
+  run-tunnel:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 ساعت حداکثر
-    
+    timeout-minutes: 360
     steps:
       - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
           sudo apt-get install -y curl wget python3
-          # نصب cloudflared برای تونل
+          # نصب cloudflared
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: راه‌اندازی سرویس وب ساده (در صورت انتخاب mode=webserver)
-        if: ${{ github.event.inputs.mode == 'webserver' }}
+      - name: راه‌اندازی سرویس وب (در صورت انتخاب)
+        if: ${{ github.event.inputs.service_type == 'web' }}
         run: |
+          # ساخت یک صفحه HTML ساده
           cat > index.html << EOF
           <!DOCTYPE html>
           <html>
-          <head><title>GitHub Actions VPS</title></head>
+          <head><title>سرویس ابری گیت‌هاب</title></head>
           <body style="font-family:Arial;text-align:center;padding:50px;">
-              <h1>✅ سرور روی GitHub Actions</h1>
-              <p>این صفحه از طریق تونل Cloudflare قابل دسترسی است.</p>
+              <h1>✅ سرویس با موفقیت اجرا شد!</h1>
+              <p>این صفحه از طریق تونل Cloudflare در دسترس است.</p>
               <p>زمان: $(date)</p>
-              <hr>
-              <p>شما می‌توانید هر محتوایی را اینجا قرار دهید.</p>
           </body>
           </html>
           EOF
           
-          # اجرای وب سرور روی پورت انتخاب شده
-          python3 -m http.server ${{ github.event.inputs.port }} &
-          echo "✅ وب سرور روی پورت ${{ github.event.inputs.port }} اجرا شد"
-          
-          # ذخیره پورت برای مرحله بعد
-          echo "USED_PORT=${{ github.event.inputs.port }}" >> $GITHUB_ENV
+          # اجرای وب سرور روی پورت 8080
+          python3 -m http.server 8080 &
+          echo "✅ وب سرور روی پورت 8080 اجرا شد."
 
-      - name: راه‌اندازی تونل SOCKS5 (در صورت انتخاب mode=tunnel)
-        if: ${{ github.event.inputs.mode == 'tunnel' }}
+      - name: راه‌اندازی پروکسی SOCKS5 (در صورت انتخاب)
+        if: ${{ github.event.inputs.service_type == 'socks' }}
         run: |
-          # نصب و راه‌اندازی یک SOCKS5 پروکسی ساده
+          # نصب و راه‌اندازی پروکسی SOCKS5
           sudo apt-get install -y dante-server
-          
-          # کانفیگ ساده SOCKS5
           sudo bash -c 'cat > /etc/danted.conf << EOF
           logoutput: syslog
           internal: 0.0.0.0 port=1080
@@ -75,40 +64,36 @@ jobs:
               protocol: tcp udp
           }
           EOF'
-          
           sudo systemctl start danted
-          echo "✅ SOCKS5 پروکسی روی پورت 1080 اجرا شد"
-          export USED_PORT="1080"
+          echo "✅ SOCKS5 پروکسی روی پورت 1080 اجرا شد."
 
       - name: ایجاد تونل عمومی با Cloudflare
         run: |
-          # اجرای تونل روی پورت مشخص شده
-          cloudflared tunnel --url http://localhost:${USED_PORT:-${{ github.event.inputs.port }}} &
-          sleep 15
-          
-          # استخراج آدرس عمومی تونل
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' 2>/dev/null)
-          
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ سرویس با موفقیت راه‌اندازی شد!"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
-          echo "📌 نوع سرویس: ${{ github.event.inputs.mode }}"
-          echo "🔗 آدرس عمومی تونل: $TUNNEL_URL"
-          echo ""
-          
-          if [ "${{ github.event.inputs.mode }}" == "webserver" ]; then
-            echo "🌐 برای مشاهده وب سرور، آدرس بالا را در مرورگر باز کنید."
+          # تعیین پورت بر اساس نوع سرویس
+          if [ "${{ github.event.inputs.service_type }}" == "web" ]; then
+            PORT=8080
           else
-            echo "🔒 برای استفاده از SOCKS5 پروکسی، این آدرس را در برنامه خود تنظیم کنید:"
-            echo "   آدرس: $TUNNEL_URL"
-            echo "   پورت: 80 (یا پورت مشخص شده در آدرس)"
+            PORT=1080
           fi
           
-          echo ""
-          echo "⏱️ این سرویس به مدت 6 ساعت فعال خواهد ماند."
+          # اجرای تونل به سمت پورت سرویس
+          cloudflared tunnel --url http://localhost:$PORT &
+          sleep 15
+          
+          # دریافت آدرس عمومی
+          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ تونل با موفقیت برقرار شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "🔗 آدرس عمومی: $TUNNEL_URL"
+          echo "📌 نوع سرویس: ${{ github.event.inputs.service_type }}"
+          if [ "${{ github.event.inputs.service_type }}" == "web" ]; then
+            echo "🌐 اکنون می‌توانید آدرس بالا را در مرورگر باز کنید"
+          else
+            echo "🔒 از این آدرس به عنوان پروکسی SOCKS5 استفاده کنید (پورت 80)"
+          fi
           echo "═══════════════════════════════════════════════════════════"
           
-          # نگهداری سرویس فعال
+          # نگهداری سرویس
           tail -f /dev/null
