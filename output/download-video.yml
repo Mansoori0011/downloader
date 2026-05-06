@@ -1,0 +1,28 @@
+name: دانلود فیلم انتخابی
+on:
+  workflow_dispatch:
+    inputs:
+      video_number:
+        description: 'شماره فیلم (1 تا 0)'
+        required: true
+        type: string
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: نصب yt-dlp
+        run: pip3 install yt-dlp
+      - name: دانلود فیلم
+        run: |
+          VIDEO_INFO=$(cat output/videos_info.json)
+          V_NUM="\"
+          VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].url")
+          VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].title")
+          echo "در حال دانلود: $VIDEO_TITLE"
+          yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+      - name: آپلود فایل
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-video
+          path: video_*.mp4
