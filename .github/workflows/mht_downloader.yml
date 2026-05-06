@@ -1,10 +1,10 @@
-name: Download as MHT
+name: Download as MHT and Update
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت'
+        description: 'آدرس سایت مورد نظر'
         required: true
         type: string
 
@@ -15,30 +15,45 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      
-      - name: نصب Node.js
+
+      - name: نصب Node.js و SingleFile
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: نصب SingleFile
         run: |
           npm install -g single-file-cli
           npx playwright install chromium
-      
+
       - name: دانلود به صورت MHT
         run: |
           URL="${{ github.event.inputs.url }}"
+          
+          # حذف فایل قبلی و ساخت پوشه
+          rm -rf web-archive
           mkdir -p web-archive
           
-          single-file "$URL" --browser-chromium-path $(npx playwright where chromium) --output web-archive/archive.mht
+          echo "در حال دانلود: $URL"
+          
+          # دانلود فایل MHT جدید
+          npx single-file "$URL" --output web-archive/archive.mht
           
           echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
-      
-      - name: ذخیره در مخزن
+
+      - name: ذخیره در مخزن (بروزرسانی خودکار)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          
+          # اضافه کردن پوشه
           git add web-archive/
-          git commit -m "دانلود MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
-          git push
+          
+          # اگر تغییری وجود داشت
+          if git diff --staged --quiet; then
+            echo "تغییری وجود ندارد"
+          else
+            git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}"
+            git push
+            echo "✅ فایل MHT بروزرسانی شد"
+          fi
