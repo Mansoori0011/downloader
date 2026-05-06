@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       page_url:
-        description: 'آدرس صفحه (مثل صفحه اصلی یا صفحه دسته‌بندی)'
+        description: 'آدرس صفحه'
         required: true
         type: string
-        default: 'https://www.example.com'
 
 jobs:
   extract-all:
@@ -20,7 +19,7 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: نصب ابزارهای مورد نیاز
+      - name: نصب ابزارها
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip jq
@@ -28,206 +27,135 @@ jobs:
           npm init -y
           npm install puppeteer
 
-      - name: ساخت اسکریپت استخراج لینک
+      - name: استخراج لینک‌ها با puppeteer
         run: |
-          echo 'const puppeteer = require("puppeteer");' > extract.js
-          echo 'const fs = require("fs");' >> extract.js
-          echo 'function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }' >> extract.js
-          echo '(async () => {' >> extract.js
-          echo '  const url = process.argv[2];' >> extract.js
-          echo '  const outputFile = process.argv[3];' >> extract.js
-          echo '  const browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox", "--disable-setuid-sandbox"] });' >> extract.js
-          echo '  const page = await browser.newPage();' >> extract.js
-          echo '  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");' >> extract.js
-          echo '  const videoUrls = new Set();' >> extract.js
-          echo '  const pageVideoLinks = [];' >> extract.js
-          echo '  page.on("request", request => {' >> extract.js
-          echo '    const requestUrl = request.url();' >> extract.js
-          echo '    if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) || requestUrl.match(/\/view_video\.php/i)) {' >> extract.js
-          echo '      videoUrls.add(requestUrl);' >> extract.js
-          echo '    }' >> extract.js
-          echo '  });' >> extract.js
-          echo '  console.log("Loading page:", url);' >> extract.js
-          echo '  await page.goto(url, { waitUntil: "networkidle2", timeout: 120000 });' >> extract.js
-          echo '  await sleep(5000);' >> extract.js
-          echo '  console.log("Scrolling page...");' >> extract.js
-          echo '  for (let i = 0; i < 10; i++) {' >> extract.js
-          echo '    await page.evaluate(() => { window.scrollBy(0, window.innerHeight); });' >> extract.js
-          echo '    await sleep(2000);' >> extract.js
-          echo '  }' >> extract.js
-          echo '  const links = await page.$$eval("a", (elements) => {' >> extract.js
-          echo '    const results = [];' >> extract.js
-          echo '    elements.forEach(a => {' >> extract.js
-          echo '      const href = a.href;' >> extract.js
-          echo '      if (href && (href.includes("/view_video.php") || href.includes("/video/") || href.includes("/watch"))) {' >> extract.js
-          echo '        results.push({ url: href, title: a.innerText?.trim() || a.title || "بدون عنوان" });' >> extract.js
-          echo '      }' >> extract.js
-          echo '    });' >> extract.js
-          echo '    return results;' >> extract.js
-          echo '  });' >> extract.js
-          echo '  links.forEach(link => pageVideoLinks.push(link));' >> extract.js
-          echo '  await browser.close();' >> extract.js
-          echo '  const result = { sourceUrl: url, timestamp: new Date().toISOString(), networkVideoUrls: Array.from(videoUrls), pageVideoLinks: pageVideoLinks };' >> extract.js
-          echo '  fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));' >> extract.js
-          echo '  console.log("Found:", pageVideoLinks.length, "video links");' >> extract.js
-          echo '})().catch(err => { console.error("Error:", err.message); process.exit(1); });' >> extract.js
-
-      - name: اجرای اسکریپت و استخراج لینک
-        run: |
+          cat > extract.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+          (async () => {
+            const url = process.argv[2];
+            const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+            const page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0');
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            await sleep(3000);
+            const links = await page.$$eval('a', els => els.map(a => ({ url: a.href, title: a.innerText?.trim() || '' })));
+            await browser.close();
+            const videoLinks = links.filter(l => l.url && (l.url.includes('/view_video.php') || l.url.includes('/video/') || l.url.includes('/watch')));
+            fs.writeFileSync(process.argv[3], JSON.stringify(videoLinks, null, 2));
+            console.log('Found:', videoLinks.length);
+          })();
+          EOF
           PAGE_URL="${{ github.event.inputs.page_url }}"
-          rm -rf file || true
-          mkdir -p file/screenshots
-          echo "در حال استخراج لینک از: $PAGE_URL"
-          node extract.js "$PAGE_URL" "file/extracted_links.json"
-          
-          VIDEO_COUNT=$(cat file/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
-          echo "تعداد فیلم‌های پیدا شده: $VIDEO_COUNT"
-          
-          echo "═══════════════════════════════════════════════════════════" > file/video_links.txt
-          echo "لیست لینک‌های فیلم" >> file/video_links.txt
-          echo "آدرس: $PAGE_URL" >> file/video_links.txt
-          echo "تاریخ: $(date)" >> file/video_links.txt
-          echo "═══════════════════════════════════════════════════════════" >> file/video_links.txt
-          echo "" >> file/video_links.txt
-          
-          cat file/extracted_links.json | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> file/video_links.txt
-          cat file/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > file/video_pages.txt
+          rm -rf file && mkdir -p file/screenshots
+          node extract.js "$PAGE_URL" "file/video_pages.json"
+          cat file/video_pages.json | jq -r '.[].url' > file/video_pages.txt
+          cat file/video_pages.json | jq -r '.[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' > file/video_links.txt
 
-      - name: دریافت اطلاعات فیلم (ساده و پایدار)
+      - name: دریافت اطلاعات فیلم (10 ترد همزمان)
         run: |
           cd file
           TOTAL=$(cat video_pages.txt | wc -l)
-          echo "در حال دریافت اطلاعات $TOTAL فیلم..."
+          echo "در حال دریافت $TOTAL فیلم با 10 ترد..."
+          
+          mkdir -p /tmp/data
+          process() {
+            url="$1"
+            idx="$2"
+            title=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 80)
+            duration=$(yt-dlp --get-duration "$url" 2>/dev/null)
+            title=${title:-"فیلم $idx"}
+            duration=${duration:-"نامشخص"}
+            echo "{\"index\":$idx,\"title\":\"$title\",\"url\":\"$url\",\"duration\":\"$duration\"}" > "/tmp/data/$idx.json"
+          }
+          export -f process
+          cat -n video_pages.txt | xargs -P 10 -I {} bash -c 'process "$(echo {})"'
           
           echo "[" > videos_info.json
-          COUNTER=0
-          while IFS= read -r url; do
-            COUNTER=$((COUNTER + 1))
-            echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL"
-            
-            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
-            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
-            TITLE=${TITLE:-"فیلم $COUNTER"}
-            DURATION=${DURATION:-"نامشخص"}
-            
-            echo "  {\"index\":$COUNTER,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}," >> videos_info.json
-          done < video_pages.txt
-          
-          sed -i '$ s/,$//' videos_info.json
-          echo "]" >> videos_info.json
+          for f in $(ls -1 /tmp/data/*.json 2>/dev/null | sort -t/ -k5 -n); do
+            cat "$f" >> videos_info.json && echo "," >> videos_info.json
+          done
+          sed -i '$ s/,$//' videos_info.json && echo "]" >> videos_info.json
+          rm -rf /tmp/data
           
           COUNT=$(cat videos_info.json | jq '. | length')
-          echo "✅ اطلاعات $COUNT فیلم دریافت شد"
+          echo "✅ $COUNT فیلم دریافت شد"
           cd ..
 
-      - name: گرفتن اسکرین‌شات
+      - name: اسکرین‌شات
         run: |
-          PAGE_URL="${{ github.event.inputs.page_url }}"
-          echo 'const puppeteer = require("puppeteer");' > screenshot.js
-          echo '(async () => {' >> screenshot.js
-          echo '  const browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox"] });' >> screenshot.js
-          echo '  const page = await browser.newPage();' >> screenshot.js
-          echo '  await page.setViewport({ width: 1280, height: 720 });' >> screenshot.js
-          echo '  await page.goto(process.argv[2], { waitUntil: "networkidle2" });' >> screenshot.js
-          echo '  await page.screenshot({ path: process.argv[3], fullPage: true });' >> screenshot.js
-          echo '  await browser.close();' >> screenshot.js
-          echo '})();' >> screenshot.js
-          node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png"
-          echo "اسکرین‌شات گرفته شد"
+          cat > ss.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          (async () => {
+            const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+            const page = await browser.newPage();
+            await page.setViewport({ width: 1280, height: 720 });
+            await page.goto(process.argv[2], { waitUntil: 'networkidle2' });
+            await page.screenshot({ path: process.argv[3], fullPage: true });
+            await browser.close();
+          })();
+          EOF
+          node ss.js "${{ github.event.inputs.page_url }}" "file/screenshots/fullpage.png"
 
-      - name: ایجاد فایل README
+      - name: فایل README
         run: |
-          VIDEO_COUNT=$(cat file/videos_info.json | jq '. | length' 2>/dev/null || echo "0")
-          cat > file/README.md << EOL
-          # نتایج استخراج فیلم
+          COUNT=$(cat file/videos_info.json | jq '. | length')
+          cat > file/README.md << EOF
+          # نتایج
           - **آدرس**: ${{ github.event.inputs.page_url }}
-          - **تاریخ**: $(date)
-          - **تعداد فیلم‌ها**: $VIDEO_COUNT
-          ## اسکرین‌شات
-          ![اسکرین‌شات](./screenshots/fullpage.png)
-          ## فایل‌ها
-          - [video_links.txt](./video_links.txt)
-          - [video_pages.txt](./video_pages.txt)
-          - [videos_info.json](./videos_info.json)
-          EOL
+          - **تعداد**: $COUNT فیلم
+          ![](./screenshots/fullpage.png)
+          EOF
 
-      - name: ایجاد فایل YAML پویا برای دانلود
+      - name: فایل پویا دانلود
         run: |
-          TOTAL_VIDEOS=$(cat file/videos_info.json | jq '. | length' 2>/dev/null || echo "0")
+          TOTAL=$(cat file/videos_info.json | jq '. | length')
           mkdir -p .github/workflows
           cat > .github/workflows/download-video.yml << YEOF
-          name: دانلود فیلم انتخابی
+          name: دانلود فیلم
           on:
             workflow_dispatch:
               inputs:
-                video_number:
-                  description: 'شماره فیلم (1 تا $TOTAL_VIDEOS)'
+                num:
+                  description: 'شماره فیلم (1-$TOTAL)'
                   required: true
                   type: string
           jobs:
             download:
               runs-on: ubuntu-latest
-              permissions:
-                contents: write
               steps:
                 - uses: actions/checkout@v4
-                - name: نصب yt-dlp
-                  run: pip3 install yt-dlp
-                - name: دانلود فیلم
-                  run: |
-                    VIDEO_INFO=\$(cat file/videos_info.json)
-                    V_NUM="\${{ github.event.inputs.video_number }}"
-                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].url")
-                    VIDEO_TITLE=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].title")
-                    echo "در حال دانلود: \$VIDEO_TITLE"
-                    yt-dlp -f best -o "video_\${V_NUM}.mp4" "\$VIDEO_URL"
-                - name: آپلود فایل
-                  uses: actions/upload-artifact@v4
+                - run: pip3 install yt-dlp
+                - run: |
+                    INFO=\$(cat file/videos_info.json)
+                    N="\${{ github.event.inputs.num }}"
+                    URL=\$(echo "\$INFO" | jq -r ".[\$((N-1))].url")
+                    yt-dlp -f best -o "video_\${N}.mp4" "\$URL"
+                - uses: actions/upload-artifact@v4
                   with:
-                    name: downloaded-video
+                    name: video
                     path: video_*.mp4
           YEOF
-          echo "فایل پویا ساخته شد"
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          
           git pull origin ${{ github.ref_name }} --rebase || true
           git add file/ .github/workflows/download-video.yml
-          
-          if git diff --staged --quiet; then
-            echo "هیچ تغییر جدیدی برای commit وجود ندارد"
-          else
-            git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
-            
-            for i in 1 2 3; do
-              echo "تلاش $i برای push..."
-              if git push origin HEAD:${{ github.ref_name }}; then
-                echo "✅ فایل‌ها با موفقیت ذخیره شدند"
-                break
-              else
-                git pull origin ${{ github.ref_name }} --rebase
-                sleep 3
-              fi
-            done
-          fi
+          git diff --staged --quiet || git commit -m "استخراج فیلم"
+          for i in 1 2 3; do
+            git push origin HEAD:${{ github.ref_name }} && break || git pull origin ${{ github.ref_name }} --rebase
+          done
 
-      - name: آپلود به عنوان Artifact
+      - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: extracted-video-links
+          name: video-data
           path: file/
 
-      - name: نمایش نتایج
+      - name: نمایش نتیجه
         run: |
-          VIDEO_COUNT=$(cat file/videos_info.json 2>/dev/null | jq '. | length' || echo "0")
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ استخراج با موفقیت انجام شد"
-          echo "═══════════════════════════════════════════════════════════"
-          echo "📁 پوشه: file/"
-          echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
-          echo "📸 اسکرین‌شات: file/screenshots/fullpage.png"
-          echo "═══════════════════════════════════════════════════════════"
+          COUNT=$(cat file/videos_info.json | jq '. | length')
+          echo "✅ $COUNT فیلم - زمان: حدود 2-3 دقیقه"
