@@ -34,16 +34,21 @@ jobs:
           pip install yt-dlp
           sudo apt-get install -y zip
 
-      - name: دانلود فیلم و ساخت ZIP چند پاره
+      - name: دانلود فیلم و ساخت ZIP چند پاره در پوشه
         run: |
           URL="${{ github.event.inputs.video_url }}"
           QUALITY="${{ github.event.inputs.quality }}"
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
           
+          # ساخت پوشه video
+          mkdir -p video
+          cd video
+          
           echo "═══════════════════════════════════════════════════════════"
           echo "🎬 در حال دانلود فیلم"
           echo "🔗 لینک: $URL"
           echo "🎚️ کیفیت: $QUALITY"
+          echo "📁 ذخیره در: video/"
           echo "═══════════════════════════════════════════════════════════"
           
           # دانلود فیلم
@@ -81,10 +86,7 @@ jobs:
             # حذف فایل اصلی
             rm "video_${TIMESTAMP}.mp4"
             
-            # لیست فایل‌های تولید شده
-            echo "✅ فایل‌های ZIP چند پاره ساخته شد:"
-            ls -la video_${TIMESTAMP}.z* 2>/dev/null || ls -la video_${TIMESTAMP}.zip
-            echo "FILE_ZIP_SPLIT=true" >> $GITHUB_ENV
+            echo "✅ فایل‌های ZIP چند پاره در پوشه video/ ساخته شد"
           else
             echo "📦 فایل کمتر از 100 مگابایت است، ZIP معمولی ساخته می‌شود..."
             
@@ -93,20 +95,19 @@ jobs:
             
             # حذف فایل اصلی
             rm "video_${TIMESTAMP}.mp4"
-            
-            echo "FILE_ZIP_SPLIT=false" >> $GITHUB_ENV
           fi
+          
+          cd ..
           
           echo "FILE_NAME=video_${TIMESTAMP}" >> $GITHUB_ENV
 
-      - name: ذخیره فایل ZIP در مخزن
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # اضافه کردن همه فایل‌های ZIP (اصلی و پارت‌ها)
-          git add ${{ env.FILE_NAME }}.zip 2>/dev/null || true
-          git add ${{ env.FILE_NAME }}.z* 2>/dev/null || true
+          # اضافه کردن پوشه video و همه محتویات
+          git add video/
           
           git commit -m "دانلود فیلم با کیفیت ${{ github.event.inputs.quality }}" || echo "تغییری وجود ندارد"
           git push origin master
@@ -115,9 +116,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
-          path: |
-            ${{ env.FILE_NAME }}.zip
-            ${{ env.FILE_NAME }}.z*
+          path: video/
 
       - name: نمایش نتیجه
         run: |
@@ -125,13 +124,9 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ دانلود و فشرده‌سازی با موفقیت انجام شد"
           echo "═══════════════════════════════════════════════════════════"
-          
-          if [ -f "${{ env.FILE_NAME }}.zip" ]; then
-            echo "📦 فایل ZIP: ${{ env.FILE_NAME }}.zip"
-          fi
-          
-          if ls ${{ env.FILE_NAME }}.z* 2>/dev/null; then
-            echo "📦 فایل‌های چند پاره:"
-            ls ${{ env.FILE_NAME }}.z*
-          fi
+          echo "📁 مسیر پوشه در مخزن:"
+          echo "   https://github.com/${{ github.repository }}/tree/master/video"
+          echo ""
+          echo "📦 محتویات پوشه video:"
+          ls -la video/
           echo "═══════════════════════════════════════════════════════════"
