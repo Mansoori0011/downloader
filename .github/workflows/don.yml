@@ -29,11 +29,12 @@ jobs:
         with:
           ref: master
 
-      - name: نصب yt-dlp
+      - name: نصب ابزارها
         run: |
           pip install yt-dlp
+          sudo apt-get install -y zip
 
-      - name: دانلود فیلم و ساخت ZIP
+      - name: دانلود فیلم و ساخت ZIP چند پاره
         run: |
           URL="${{ github.event.inputs.video_url }}"
           QUALITY="${{ github.event.inputs.quality }}"
@@ -64,20 +65,49 @@ jobs:
               ;;
           esac
           
-          # ساخت فایل ZIP
-          zip "video_${TIMESTAMP}.zip" "video_${TIMESTAMP}.mp4"
-          echo "✅ فایل ZIP ساخته شد: video_${TIMESTAMP}.zip"
+          # بررسی حجم فایل
+          FILE_SIZE=$(stat -c%s "video_${TIMESTAMP}.mp4")
+          FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
           
-          # حذف فایل MP4 (فقط ZIP بماند)
-          rm "video_${TIMESTAMP}.mp4"
+          echo "📊 حجم فایل: $FILE_SIZE_MB MB"
           
-          echo "FILE_ZIP=video_${TIMESTAMP}.zip" >> $GITHUB_ENV
+          # اگر حجم بیشتر از 100 مگابایت بود، به چند پارت تقسیم کن
+          if [ $FILE_SIZE_MB -gt 100 ]; then
+            echo "📦 فایل بزرگتر از 100 مگابایت است، در حال تقسیم به پارت‌های 95 مگابایتی..."
+            
+            # تقسیم به فایل‌های 95 مگابایتی
+            zip -s 95m "video_${TIMESTAMP}.zip" "video_${TIMESTAMP}.mp4"
+            
+            # حذف فایل اصلی
+            rm "video_${TIMESTAMP}.mp4"
+            
+            # لیست فایل‌های تولید شده
+            echo "✅ فایل‌های ZIP چند پاره ساخته شد:"
+            ls -la video_${TIMESTAMP}.z* 2>/dev/null || ls -la video_${TIMESTAMP}.zip
+            echo "FILE_ZIP_SPLIT=true" >> $GITHUB_ENV
+          else
+            echo "📦 فایل کمتر از 100 مگابایت است، ZIP معمولی ساخته می‌شود..."
+            
+            # ساخت ZIP معمولی
+            zip "video_${TIMESTAMP}.zip" "video_${TIMESTAMP}.mp4"
+            
+            # حذف فایل اصلی
+            rm "video_${TIMESTAMP}.mp4"
+            
+            echo "FILE_ZIP_SPLIT=false" >> $GITHUB_ENV
+          fi
+          
+          echo "FILE_NAME=video_${TIMESTAMP}" >> $GITHUB_ENV
 
-      - name: ذخیره در مخزن
+      - name: ذخیره فایل ZIP در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add "${{ env.FILE_ZIP }}"
+          
+          # اضافه کردن همه فایل‌های ZIP (اصلی و پارت‌ها)
+          git add ${{ env.FILE_NAME }}.zip 2>/dev/null || true
+          git add ${{ env.FILE_NAME }}.z* 2>/dev/null || true
+          
           git commit -m "دانلود فیلم با کیفیت ${{ github.event.inputs.quality }}" || echo "تغییری وجود ندارد"
           git push origin master
 
@@ -85,4 +115,23 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
-          path: ${{ env.FILE_ZIP }}
+          path: |
+            ${{ env.FILE_NAME }}.zip
+            ${{ env.FILE_NAME }}.z*
+
+      - name: نمایش نتیجه
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ دانلود و فشرده‌سازی با موفقیت انجام شد"
+          echo "═══════════════════════════════════════════════════════════"
+          
+          if [ -f "${{ env.FILE_NAME }}.zip" ]; then
+            echo "📦 فایل ZIP: ${{ env.FILE_NAME }}.zip"
+          fi
+          
+          if ls ${{ env.FILE_NAME }}.z* 2>/dev/null; then
+            echo "📦 فایل‌های چند پاره:"
+            ls ${{ env.FILE_NAME }}.z*
+          fi
+          echo "═══════════════════════════════════════════════════════════"
