@@ -57,60 +57,11 @@ jobs:
           })();
           ENDOFSCRIPT
 
-      - name: Create video extractor script
-        run: |
-          cat > extract-videos.js << 'ENDOFSCRIPT'
-          const puppeteer = require('puppeteer');
-          const fs = require('fs');
-          
-          (async () => {
-            const url = process.argv[2];
-            const outputFile = process.argv[3];
-            
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-            });
-            const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-            
-            console.log('Loading page for video extraction:', url);
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            
-            for (let i = 0; i < 3; i++) {
-              await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-              await new Promise(r => setTimeout(r, 1000));
-            }
-            
-            const videoLinks = await page.evaluate(() => {
-              const results = [];
-              const seen = new Set();
-              
-              document.querySelectorAll('a').forEach(link => {
-                const href = link.href;
-                const title = link.innerText?.trim() || link.title || '';
-                
-                if (href && (href.includes('/video/') || href.includes('/watch') || href.includes('/v/') || href.includes('/view_video.php'))) {
-                  if (!seen.has(href)) {
-                    seen.add(href);
-                    results.push({ title: title.substring(0, 100) || 'No title', url: href });
-                  }
-                }
-              });
-              
-              return results.slice(0, 50);
-            });
-            
-            fs.writeFileSync(outputFile, JSON.stringify(videoLinks, null, 2));
-            console.log('Extracted', videoLinks.length, 'video links');
-            await browser.close();
-          })();
-          ENDOFSCRIPT
-
       - name: Visit URL and download media
         run: |
           RAW_URL="${{ github.event.inputs.url }}"
           
+          # Normalize URL: try HTTPS first if no protocol given
           if [[ ! "$RAW_URL" =~ ^https?:// ]]; then
             HTTPS_URL="https://$RAW_URL"
             HTTP_URL="http://$RAW_URL"
@@ -129,27 +80,51 @@ jobs:
           
           echo "Visiting $URL"
 
+          # Extract domain (remove protocol and optional www)
           DOMAIN=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
+          
           SLUG=$(echo "$URL" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c1-100)
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           FOLDER="pages/$DOMAIN/$SLUG/$TIMESTAMP"
           MEDIA_FOLDER="$FOLDER/media"
-          VIDEOS_FOLDER="$FOLDER/video_links"
-          mkdir -p "$FOLDER" "$MEDIA_FOLDER" "$VIDEOS_FOLDER"
+          mkdir -p "$FOLDER" "$MEDIA_FOLDER"
 
+          # Download HTML
           echo "Downloading page HTML..."
           curl -L -A "Mozilla/5.0" -o "$FOLDER/page.html" "$URL"
 
+          # Take screenshot
           echo "Taking screenshot..."
           node screenshot.js "$URL" "$FOLDER/screenshot.png" && SCREENSHOT_OK=true || SCREENSHOT_OK=false
 
-          echo "Extracting video links..."
-          node extract-videos.js "$URL" "$VIDEOS_FOLDER/video_links.json"
+          # Extract links
+          grep -oP 'href="\K[^"]*' "$FOLDER/page.html" | sort -u > "$FOLDER/all_links.txt"
+          grep -oP 'src="\K[^"]*' "$FOLDER/page.html" | sort -u >> "$FOLDER/all_links.txt"
+          sort -u "$FOLDER/all_links.txt" -o "$FOLDER/all_links.txt"
 
-          grep -oP 'href="\K[^"]*' "$FOLDER/page.html" | sort -u > "$FOLDER/all_links.txt" 2>/dev/null || true
-          grep -oP 'src="\K[^"]*' "$FOLDER/page.html" | sort -u >> "$FOLDER/all_links.txt" 2>/dev/null || true
-          sort -u "$FOLDER/all_links.txt" -o "$FOLDER/all_links.txt" 2>/dev/null || true
+          # ========== اضافه شده: استخراج لینک فیلم‌ها با yt-dlp ==========
+          echo "Extracting video links with yt-dlp..."
+          
+          # استخراج لینک مستقیم فیلم‌ها از صفحه
+          yt-dlp --get-url --flat-playlist "$URL" 2>/dev/null > "$FOLDER/direct_video_urls.txt"
+          
+          # استخراج اطلاعات کامل فیلم‌ها
+          yt-dlp --dump-json --flat-playlist "$URL" 2>/dev/null | jq -r '.title + " | " + .url' > "$FOLDER/video_list.txt"
+          
+          VIDEO_COUNT=$(cat "$FOLDER/video_list.txt" 2>/dev/null | wc -l)
+          echo "Found $VIDEO_COUNT videos on this page"
+          
+          # ذخیره لینک‌های مستقیم در فایل جداگانه
+          if [ -s "$FOLDER/direct_video_urls.txt" ]; then
+            echo "✅ Direct video URLs saved to direct_video_urls.txt"
+          fi
+          
+          if [ -s "$FOLDER/video_list.txt" ]; then
+            echo "✅ Video list saved to video_list.txt"
+          fi
+          # ========== پایان بخش اضافه شده ==========
 
+          # Media types to download
           MEDIA_EXT="png|jpg|jpeg|gif|svg|webp|bmp|ico|mp3|wav|ogg|flac|aac|mp4|webm|avi|mov|mkv|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|tar|gz|7z"
 
           > "$FOLDER/media_links.txt"
@@ -158,7 +133,9 @@ jobs:
           echo "## Downloaded Media Files" > "$FOLDER/downloaded_media.md"
           echo "" >> "$FOLDER/downloaded_media.md"
 
+          # Base URL for resolving relative links
           BASE_URL="${URL%%/*}"
+          BASE_DOMAIN=$(echo "$URL" | awk -F/ '{print $3}')
 
           while IFS= read -r link; do
             [ -z "$link" ] && continue
@@ -196,26 +173,10 @@ jobs:
             fi
           done < "$FOLDER/all_links.txt"
 
-          VIDEO_COUNT=$(cat "$VIDEOS_FOLDER/video_links.json" 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" || echo "0")
-          
-          echo "## 🎬 Extracted Video Links ($VIDEO_COUNT videos)" > "$VIDEOS_FOLDER/video_links.md"
-          echo "" >> "$VIDEOS_FOLDER/video_links.md"
-          
-          if [ -f "$VIDEOS_FOLDER/video_links.json" ]; then
-            python3 << 'PYEOF' >> "$VIDEOS_FOLDER/video_links.md"
-import sys, json
-with open('$VIDEOS_FOLDER/video_links.json', 'r') as f:
-    data = json.load(f)
-for i, item in enumerate(data):
-    title = item.get('title', 'No title')[:50]
-    url = item.get('url', '')
-    print(f'{i+1}. **{title}**')
-    print(f'   🔗 [Link]({url})')
-    print()
-PYEOF
-          fi
-
+          # Build index.md
           MEDIA_COUNT=$(find "$MEDIA_FOLDER" -type f 2>/dev/null | wc -l)
+          VIDEO_COUNT_FINAL=$(cat "$FOLDER/direct_video_urls.txt" 2>/dev/null | wc -l)
+          
           {
             echo "# Visited: $URL"
             echo "**Time:** $(date)"
@@ -228,8 +189,17 @@ PYEOF
             echo "## Raw HTML"
             echo "[page.html](./page.html)"
             echo ""
-            echo "## 🎬 Video Links Extracted"
-            echo "[$VIDEO_COUNT videos found](./video_links/video_links.md)"
+            echo "## Video Links Extracted ($VIDEO_COUNT_FINAL videos)"
+            if [ -s "$FOLDER/direct_video_urls.txt" ]; then
+              echo "Direct video URLs:"
+              echo '```'
+              cat "$FOLDER/direct_video_urls.txt"
+              echo '```'
+              echo ""
+              echo "[Download video list](./video_list.txt)"
+            else
+              echo "_No video links found_"
+            fi
             echo ""
             echo "## Downloaded Media ($MEDIA_COUNT files)"
             if [ "$MEDIA_COUNT" -gt 0 ]; then
@@ -246,23 +216,26 @@ PYEOF
             fi
             echo ""
             echo "## Stats"
-            echo "- Links: $(wc -l < "$FOLDER/all_links.txt" 2>/dev/null || echo 0)"
+            echo "- Links: $(wc -l < "$FOLDER/all_links.txt")"
             echo "- Media: $MEDIA_COUNT"
-            echo "- Video Links: $VIDEO_COUNT"
+            echo "- Videos found: $VIDEO_COUNT_FINAL"
           } > "$FOLDER/index.md"
 
+          # Update history in browse.md (instead of README.md)
           BROWSE_FILE="browse.md"
           if [ ! -f "$BROWSE_FILE" ]; then
             echo "# Browsed Websites" > "$BROWSE_FILE"
             echo "" >> "$BROWSE_FILE"
           fi
-          echo "- [${SLUG} (${TIMESTAMP})]($FOLDER/index.md) — $MEDIA_COUNT media, $VIDEO_COUNT video links" >> "$BROWSE_FILE"
+          # Add relative link to the index.md file
+          echo "- [${SLUG} (${TIMESTAMP})]($FOLDER/index.md) — $MEDIA_COUNT media files — $VIDEO_COUNT_FINAL videos" >> "$BROWSE_FILE"
 
+          # Save variables for zip step
           echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
           echo "SLUG=$SLUG" >> $GITHUB_ENV
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
 
-          echo "Done: $MEDIA_COUNT files downloaded, $VIDEO_COUNT video links extracted"
+          echo "Done: $MEDIA_COUNT files downloaded, $VIDEO_COUNT_FINAL video links extracted"
 
       - name: Create zip archive of the timestamp folder
         run: |
@@ -273,7 +246,7 @@ PYEOF
       - name: Commit and push
         run: |
           git config user.name "github-actions"
-          git config.user.email "github-actions@github.com"
+          git config user.email "github-actions@github.com"
           git add pages/ browse.md
           if git diff --staged --quiet; then
             echo "Nothing to commit"
