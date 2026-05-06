@@ -17,9 +17,6 @@ on:
 jobs:
   extract-all:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      workflows: write   # 👈 اضافه شد برای مجوز تغییر فایل‌های workflow
     steps:
       - uses: actions/checkout@v4
         with:
@@ -186,9 +183,6 @@ jobs:
           jobs:
             download:
               runs-on: ubuntu-latest
-              permissions:
-                contents: write
-                workflows: write
               steps:
                 - uses: actions/checkout@v4
                 - name: نصب yt-dlp
@@ -218,13 +212,14 @@ jobs:
           git fetch origin
           git checkout master || git checkout -b master
           
-          git add output/ .github/workflows/download-video.yml
+          git add output/ .github/workflows/download-video.yml || true
+          git add output/
           
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
-            git push origin HEAD:master --force-with-lease
+            git push origin HEAD:master --force-with-lease || git push origin HEAD:master
             echo "✅ فایل‌ها با موفقیت در شاخه master ذخیره شدند"
           fi
 
