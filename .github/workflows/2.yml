@@ -1,67 +1,84 @@
-name: Web Proxy (No VNC)
+name: ساخت صفحه گوگل زنده
 
 on:
   workflow_dispatch:
 
 jobs:
-  proxy:
+  create-iframe:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Install PHP
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y php-cli php-curl
+      - uses: actions/checkout@v4
 
-      - name: Create Proxy
+      - name: ساخت صفحه HTML با iframe
         run: |
-          cat > index.php << 'EOF'
-          <?php
-          $url = $_GET['url'] ?? '';
-          if ($url) {
-              $ch = curl_init();
-              curl_setopt($ch, CURLOPT_URL, $url);
-              curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-              curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-              curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
-              curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-              $content = curl_exec($ch);
-              curl_close($ch);
-              echo $content;
-          } else {
-          ?>
+          cat > google-live.html << 'EOF'
           <!DOCTYPE html>
-          <html>
-          <head><title>GitHub Proxy</title></head>
-          <body style="font-family:Arial;text-align:center;padding:50px">
-          <h1>🌐 GitHub Web Proxy</h1>
-          <form method="get">
-              <input type="text" name="url" placeholder="https://google.com" size="50">
-              <button type="submit">Go</button>
-          </form>
+          <html lang="fa">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Google Live - جستجوی زنده</title>
+              <style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #202124; height: 100vh; display: flex; flex-direction: column; }
+                  .header { background: #202124; padding: 15px; text-align: center; border-bottom: 1px solid #5f6368; }
+                  h1 { color: #e8eaed; font-size: 24px; }
+                  .search-bar { padding: 15px; background: #303134; text-align: center; }
+                  input { width: 500px; max-width: 90%; padding: 12px 20px; font-size: 16px; border: none; border-radius: 24px; background: #202124; color: #e8eaed; outline: none; border: 1px solid #5f6368; }
+                  input:focus { border-color: #8ab4f8; }
+                  iframe { flex: 1; width: 100%; border: none; background: white; }
+                  .info { background: #303134; color: #9aa0a6; text-align: center; padding: 8px; font-size: 12px; border-top: 1px solid #5f6368; }
+                  .btn { background: #8ab4f8; color: #202124; border: none; padding: 12px 25px; border-radius: 24px; cursor: pointer; margin-left: 10px; font-weight: bold; }
+                  .btn:hover { background: #aec9fa; }
+              </style>
+          </head>
+          <body>
+              <div class="header">
+                  <h1>🔍 Google Live Search</h1>
+              </div>
+              
+              <div class="search-bar">
+                  <input type="text" id="searchInput" placeholder="جستجو در گوگل..." onkeypress="if(event.key==='Enter') searchGoogle()">
+                  <button class="btn" onclick="searchGoogle()">جستجو</button>
+              </div>
+              
+              <iframe id="googleFrame" src="https://www.google.com"></iframe>
+              
+              <div class="info">
+                  📌 این صفحه مستقیماً از مخزن گیت‌هاب باز شده است | جستجوهای شما در iframe انجام می‌شود
+              </div>
+              
+              <script>
+                  function searchGoogle() {
+                      const query = document.getElementById('searchInput').value;
+                      if (query) {
+                          const iframe = document.getElementById('googleFrame');
+                          iframe.src = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+                      }
+                  }
+              </script>
           </body>
           </html>
-          <?php } ?>
           EOF
 
-      - name: Install LocalTunnel
+      - name: ذخیره در مخزن
         run: |
-          npm install -g localtunnel
-
-      - name: Run Proxy
-        run: |
-          php -S 0.0.0.0:8080 &
-          sleep 3
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add google-live.html
+          git commit -m "Add Google live search page" || echo "No changes"
+          git push
           
-          lt --port 8080 --subdomain githubwebproxy >> tunnel.log 2>&1 &
-          sleep 15
-          
-          TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.loca\.lt' tunnel.log | head -1)
-          
-          echo "========================================="
-          echo "✅ Web Proxy آماده است!"
-          echo "========================================="
-          echo "لینک را در مرورگر خود باز کن:"
-          echo "$TUNNEL_URL"
-          echo "========================================="
-          
-          tail -f /dev/null
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ صفحه گوگل زنده ساخته شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "🔗 لینک صفحه (در مرورگر باز کن):"
+          echo "   https://github.com/${{ github.repository }}/blob/main/google-live.html"
+          echo ""
+          echo "📌 بعد از باز شدن، روی دکمه 'Raw' یا 'Download' کلیک نکن!"
+          echo "   فقط لینک بالا را باز کن و از صفحه استفاده کن."
+          echo "═══════════════════════════════════════════════════════════"
