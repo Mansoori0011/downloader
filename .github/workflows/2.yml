@@ -1,36 +1,36 @@
-name: SOCKS5 Proxy via Cloudflare
+name: DNS Tunnel via Iodine
 
 on:
   workflow_dispatch:
 
 jobs:
-  proxy:
+  dns-tunnel:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 hours max
     steps:
-      - name: Install Chisel & Cloudflared
+      - name: Install Iodine
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget
-          # Install Chisel
-          wget -q https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz
-          gunzip chisel_1.9.1_linux_amd64.gz
-          chmod +x chisel_1.9.1_linux_amd64
-          sudo mv chisel_1.9.1_linux_amd64 /usr/local/bin/chisel
-          # Install Cloudflared
+          sudo apt-get install -y iodine dnsutils
+
+      - name: Setup DNS Tunnel Server
+        run: |
+          # ایجاد تونل DNS روی پورت 53
+          sudo iodined -f -c -P MySecretPass123 10.0.0.1 tunnel.local &
+          sleep 5
+          
+          echo "DNS Tunnel Server Running"
+          echo "Server IP: 10.0.0.1"
+          echo "Password: MySecretPass123"
+
+      - name: Install Cloudflared for Public Access
+        run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-      - name: Start SOCKS5 Server
-        run: |
-          # Start Chisel server in SOCKS5 mode
-          chisel server --port 8080 --socks5 &
-          # Start Cloudflare Tunnel to expose port 8080
-          cloudflared tunnel --url http://localhost:8080 &
+          
+          # تونل DNS را از طریق Cloudflare暴露 کن
+          cloudflared tunnel --url dns://localhost:53 &
           sleep 10
-          # Get the tunnel URL
+          
           TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "SOCKS5 Proxy is available at: $TUNNEL_URL"
-          echo "Connect using: chisel client $TUNNEL_URL socks"
-          echo "SOCKS5_PROXY=$TUNNEL_URL" >> $GITHUB_ENV
-          tail -f /dev/null
+          echo "DNS Tunnel Public URL: $TUNNEL_URL"
