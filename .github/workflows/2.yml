@@ -1,188 +1,114 @@
-name: YouTube Live Browser via GitHub
+name: Tunnel & VPS-like Service
 
 on:
   workflow_dispatch:
     inputs:
-      youtube_url:
-        description: 'آدرس یوتیوب (مثال: https://www.youtube.com/watch?v=dQw4w9WgXcQ)'
+      mode:
+        description: 'نوع سرویس (tunnel یا webserver)'
         required: true
+        type: choice
+        options:
+          - tunnel
+          - webserver
+      port:
+        description: 'پورت مورد نظر (مثال: 8080)'
+        required: false
         type: string
-        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        default: '8080'
 
 jobs:
-  youtube-browser:
+  run-service:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 360  # 6 ساعت حداکثر
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - name: نصب ابزارها
+      - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
-          sudo apt-get install -y php-cli php-curl wget unzip
+          sudo apt-get install -y curl wget python3
+          # نصب cloudflared برای تونل
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: ساخت صفحه پخش یوتیوب
+      - name: راه‌اندازی سرویس وب ساده (در صورت انتخاب mode=webserver)
+        if: ${{ github.event.inputs.mode == 'webserver' }}
         run: |
-          YOUTUBE_URL="${{ github.event.inputs.youtube_url }}"
-          
-          cat > youtube-player.html << EOF
+          cat > index.html << EOF
           <!DOCTYPE html>
-          <html lang="fa">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>YouTube Live Player - پخش زنده از طریق گیت‌هاب</title>
-              <style>
-                  * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body { 
-                      font-family: Arial, sans-serif; 
-                      background: #0f0f0f; 
-                      min-height: 100vh;
-                      display: flex;
-                      justify-content: center;
-                      align-items: center;
-                      padding: 20px;
-                  }
-                  .container {
-                      max-width: 1200px;
-                      width: 100%;
-                      background: #1f1f1f;
-                      border-radius: 20px;
-                      overflow: hidden;
-                      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-                  }
-                  .video-container {
-                      position: relative;
-                      width: 100%;
-                      padding-bottom: 56.25%;
-                      background: #000;
-                  }
-                  .video-container iframe {
-                      position: absolute;
-                      top: 0;
-                      left: 0;
-                      width: 100%;
-                      height: 100%;
-                      border: none;
-                  }
-                  .info {
-                      padding: 20px;
-                      background: #1f1f1f;
-                      color: #fff;
-                  }
-                  h2 {
-                      font-size: 20px;
-                      margin-bottom: 10px;
-                  }
-                  .url-box {
-                      background: #2f2f2f;
-                      padding: 10px;
-                      border-radius: 8px;
-                      margin-top: 10px;
-                      word-break: break-all;
-                      font-size: 12px;
-                      color: #aaa;
-                  }
-                  .status {
-                      background: #2e7d32;
-                      padding: 8px 15px;
-                      border-radius: 20px;
-                      display: inline-block;
-                      font-size: 12px;
-                      margin-top: 10px;
-                  }
-                  .footer {
-                      text-align: center;
-                      padding: 15px;
-                      background: #1f1f1f;
-                      border-top: 1px solid #2f2f2f;
-                      color: #888;
-                      font-size: 12px;
-                  }
-                  input {
-                      width: 70%;
-                      padding: 10px;
-                      border-radius: 25px;
-                      border: none;
-                      background: #2f2f2f;
-                      color: #fff;
-                      margin-right: 10px;
-                  }
-                  button {
-                      padding: 10px 20px;
-                      border-radius: 25px;
-                      border: none;
-                      background: #ff0000;
-                      color: white;
-                      cursor: pointer;
-                      font-weight: bold;
-                  }
-                  button:hover {
-                      background: #cc0000;
-                  }
-                  .search-section {
-                      padding: 15px;
-                      background: #1f1f1f;
-                      border-bottom: 1px solid #2f2f2f;
-                      text-align: center;
-                  }
-              </style>
-          </head>
-          <body>
-              <div class="container">
-                  <div class="search-section">
-                      <form method="get" action="">
-                          <input type="text" name="url" placeholder="لینک جدید یوتیوب را وارد کن..." value="$YOUTUBE_URL">
-                          <button type="submit">🎬 پخش</button>
-                      </form>
-                  </div>
-                  
-                  <div class="video-container">
-                      <iframe src="https://www.youtube.com/embed/$(echo "$YOUTUBE_URL" | grep -oP 'v=\K[^&]+')" 
-                              frameborder="0" 
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                              allowfullscreen>
-                      </iframe>
-                  </div>
-                  
-                  <div class="info">
-                      <h2>🎥 پخش زنده از طریق سرور گیت‌هاب</h2>
-                      <div class="url-box">
-                          📍 آدرس فعلی: $YOUTUBE_URL
-                      </div>
-                      <div class="status">
-                          ✅ متصل به سرور گیت‌هاب
-                      </div>
-                      <div style="margin-top: 15px; font-size: 14px; color: #aaa;">
-                          💡 این صفحه از طریق سرورهای ابری گیت‌هاب اجرا می‌شود | فیلترشکن نیست، ولی ترافیک از سرور گیت‌هاب عبور می‌کند
-                      </div>
-                  </div>
-                  
-                  <div class="footer">
-                      🔗 GitHub Actions Live Player | ویدیوها از طریق سرور گیت‌هاب پخش می‌شوند
-                  </div>
-              </div>
+          <html>
+          <head><title>GitHub Actions VPS</title></head>
+          <body style="font-family:Arial;text-align:center;padding:50px;">
+              <h1>✅ سرور روی GitHub Actions</h1>
+              <p>این صفحه از طریق تونل Cloudflare قابل دسترسی است.</p>
+              <p>زمان: $(date)</p>
+              <hr>
+              <p>شما می‌توانید هر محتوایی را اینجا قرار دهید.</p>
           </body>
           </html>
           EOF
+          
+          # اجرای وب سرور روی پورت انتخاب شده
+          python3 -m http.server ${{ github.event.inputs.port }} &
+          echo "✅ وب سرور روی پورت ${{ github.event.inputs.port }} اجرا شد"
+          
+          # ذخیره پورت برای مرحله بعد
+          echo "USED_PORT=${{ github.event.inputs.port }}" >> $GITHUB_ENV
 
-      - name: ذخیره در مخزن و نمایش لینک
+      - name: راه‌اندازی تونل SOCKS5 (در صورت انتخاب mode=tunnel)
+        if: ${{ github.event.inputs.mode == 'tunnel' }}
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add youtube-player.html
-          git commit -m "Add YouTube live player via GitHub" || echo "No changes"
-          git push
+          # نصب و راه‌اندازی یک SOCKS5 پروکسی ساده
+          sudo apt-get install -y dante-server
+          
+          # کانفیگ ساده SOCKS5
+          sudo bash -c 'cat > /etc/danted.conf << EOF
+          logoutput: syslog
+          internal: 0.0.0.0 port=1080
+          external: eth0
+          method: none
+          client pass {
+              from: 0.0.0.0/0 to: 0.0.0.0/0
+          }
+          pass {
+              from: 0.0.0.0/0 to: 0.0.0.0/0
+              protocol: tcp udp
+          }
+          EOF'
+          
+          sudo systemctl start danted
+          echo "✅ SOCKS5 پروکسی روی پورت 1080 اجرا شد"
+          export USED_PORT="1080"
+
+      - name: ایجاد تونل عمومی با Cloudflare
+        run: |
+          # اجرای تونل روی پورت مشخص شده
+          cloudflared tunnel --url http://localhost:${USED_PORT:-${{ github.event.inputs.port }}} &
+          sleep 15
+          
+          # استخراج آدرس عمومی تونل
+          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' 2>/dev/null)
           
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "✅ پخش‌کننده یوتیوب آماده است!"
+          echo "✅ سرویس با موفقیت راه‌اندازی شد!"
           echo "═══════════════════════════════════════════════════════════"
           echo ""
-          echo "🔗 لینک صفحه (در مرورگر باز کن):"
-          echo "   https://github.com/${{ github.repository }}/blob/main/youtube-player.html"
+          echo "📌 نوع سرویس: ${{ github.event.inputs.mode }}"
+          echo "🔗 آدرس عمومی تونل: $TUNNEL_URL"
           echo ""
-          echo "📌 می‌توانی هر لینک یوتیوبی را وارد کنی و ببینی."
-          echo "⚠️ توجه: این فقط یک پخش‌کننده است، فیلترشکن نیست!"
+          
+          if [ "${{ github.event.inputs.mode }}" == "webserver" ]; then
+            echo "🌐 برای مشاهده وب سرور، آدرس بالا را در مرورگر باز کنید."
+          else
+            echo "🔒 برای استفاده از SOCKS5 پروکسی، این آدرس را در برنامه خود تنظیم کنید:"
+            echo "   آدرس: $TUNNEL_URL"
+            echo "   پورت: 80 (یا پورت مشخص شده در آدرس)"
+          fi
+          
+          echo ""
+          echo "⏱️ این سرویس به مدت 6 ساعت فعال خواهد ماند."
           echo "═══════════════════════════════════════════════════════════"
+          
+          # نگهداری سرویس فعال
+          tail -f /dev/null
