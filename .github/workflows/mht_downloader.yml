@@ -15,6 +15,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: نصب Node.js و SingleFile
         uses: actions/setup-node@v4
@@ -30,13 +34,11 @@ jobs:
         run: |
           URL="${{ github.event.inputs.url }}"
           
-          # حذف فایل قبلی و ساخت پوشه
           rm -rf web-archive
           mkdir -p web-archive
           
           echo "در حال دانلود: $URL"
           
-          # دانلود فایل MHT جدید
           npx single-file "$URL" --output web-archive/archive.mht
           
           echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
@@ -44,16 +46,18 @@ jobs:
       - name: ذخیره در مخزن (بروزرسانی خودکار)
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config.user.email "actions@github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           
-          # اضافه کردن پوشه
+          git fetch origin
+          git checkout master || git checkout -b master
+          
           git add web-archive/
           
-          # اگر تغییری وجود داشت
           if git diff --staged --quiet; then
             echo "تغییری وجود ندارد"
           else
             git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}"
-            git push
+            git push origin master
             echo "✅ فایل MHT بروزرسانی شد"
           fi
