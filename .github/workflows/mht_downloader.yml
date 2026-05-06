@@ -1,59 +1,44 @@
-name: Download Website as MHT Archive
+name: Download as MHT
 
 on:
   workflow_dispatch:
     inputs:
-      target_url:
-        description: 'آدرس سایت مورد نظر (مثال: https://example.com)'
+      url:
+        description: 'آدرس سایت'
         required: true
         type: string
 
 jobs:
-  create-archive:
+  mht:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: نصب ابزارهای مورد نیاز
+      
+      - name: نصب Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: نصب SingleFile
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl unzip
-          pip install mhtml
-
-      - name: دانلود و ساخت فایل MHT
+          npm install -g single-file-cli
+          npx playwright install chromium
+      
+      - name: دانلود به صورت MHT
         run: |
-          URL="${{ github.event.inputs.target_url }}"
-          
-          rm -rf web-archive
+          URL="${{ github.event.inputs.url }}"
           mkdir -p web-archive
-
-          echo "در حال دانلود صفحه: $URL"
-          wget --recursive --page-requisites --convert-links --adjust-extension \
-               --no-parent --directory-prefix=web-archive/temp "$URL" 2>/dev/null
-
-          MAIN_FILE=$(find web-archive/temp -name "*.html" | head -1)
           
-          if [ -f "$MAIN_FILE" ]; then
-            echo "import sys, mhtml" > convert.py
-            echo "with open(sys.argv[1], 'rb') as f: html = f.read()" >> convert.py
-            echo "with open(sys.argv[2], 'wb') as f: f.write(mhtml.document(html).serialize())" >> convert.py
-            
-            python3 convert.py "$MAIN_FILE" web-archive/archive.mht
-            echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
-          else
-            echo "❌ خطا: فایل HTML اصلی پیدا نشد"
-            exit 1
-          fi
-
-          rm -rf web-archive/temp
-          rm convert.py
-
-      - name: ارسال به مخزن گیت‌هاب
+          single-file "$URL" --browser-chromium-path $(npx playwright where chromium) --output web-archive/archive.mht
+          
+          echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
+      
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add web-archive/
-          git commit -m "به‌روزرسانی آرشیو MHT از ${{ github.event.inputs.target_url }}" || echo "تغییری وجود ندارد"
+          git commit -m "دانلود MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
           git push
