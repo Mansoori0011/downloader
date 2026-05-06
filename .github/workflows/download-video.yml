@@ -27,6 +27,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: نصب yt-dlp
         run: pip3 install yt-dlp
@@ -60,7 +64,6 @@ jobs:
             exit 1
           fi
           
-          # ساخت پوشه download
           mkdir -p download
           
           echo "═══════════════════════════════════════════════════════════"
@@ -68,12 +71,10 @@ jobs:
           echo "📌 عنوان: ${VIDEO_TITLE:-بدون عنوان}"
           echo "🔗 لینک: $VIDEO_URL"
           echo "🎚️ کیفیت: $QUALITY"
-          echo "📁 ذخیره در: download/"
           echo "═══════════════════════════════════════════════════════════"
           
           cd download
           
-          # انتخاب کیفیت
           case "$QUALITY" in
             "best")
               yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
@@ -104,32 +105,42 @@ jobs:
           cd ..
           echo "✅ دانلود کامل شد: download/${FILE_NAME}"
       
-      - name: ایجاد فایل ZIP
+      - name: ایجاد فایل ZIP فقط از فایل دانلود شده
         run: |
           cd download
-          ZIP_NAME="downloaded_files_$(date +'%Y%m%d_%H%M%S').zip"
-          zip -r "$ZIP_NAME" .
-          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          DOWNLOADED_FILE=$(ls -t *.mp4 *.mp3 2>/dev/null | head -1)
+          if [ -n "$DOWNLOADED_FILE" ]; then
+            ZIP_NAME="${DOWNLOADED_FILE%.*}.zip"
+            zip "$ZIP_NAME" "$DOWNLOADED_FILE"
+            echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+            echo "✅ فایل ZIP ساخته شد: $ZIP_NAME"
+          else
+            echo "❌ خطا: هیچ فایلی برای زیپ کردن پیدا نشد"
+            exit 1
+          fi
           cd ..
       
-      - name: ذخیره در مخزن
+      - name: ذخیره فقط فایل ZIP در مخزن (شاخه master)
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           
-          # افزودن پوشه download و فایل ZIP
-          git add download/
+          git fetch origin
+          git checkout master || git checkout -b master
+          
+          git add download/*.zip
           
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "دانلود فیلم شماره ${{ github.event.inputs.video_number }} با کیفیت ${{ github.event.inputs.quality }}"
-            git push
-            echo "✅ فایل در مخزن ذخیره شد"
+            git push origin master
+            echo "✅ فایل ZIP در شاخه master ذخیره شد"
           fi
       
-      - name: آپلود به عنوان Artifact (پشتیبان)
+      - name: آپلود فایل ZIP به عنوان Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-files
-          path: download/
+          name: downloaded-file
+          path: download/*.zip
