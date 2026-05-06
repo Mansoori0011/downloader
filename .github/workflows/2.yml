@@ -1,36 +1,67 @@
-name: DNS Tunnel via Iodine
+name: Web Proxy (No VNC)
 
 on:
   workflow_dispatch:
 
 jobs:
-  dns-tunnel:
+  proxy:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Iodine
+      - name: Install PHP
         run: |
           sudo apt-get update
-          sudo apt-get install -y iodine dnsutils
+          sudo apt-get install -y php-cli php-curl
 
-      - name: Setup DNS Tunnel Server
+      - name: Create Proxy
         run: |
-          # ایجاد تونل DNS روی پورت 53
-          sudo iodined -f -c -P MySecretPass123 10.0.0.1 tunnel.local &
-          sleep 5
-          
-          echo "DNS Tunnel Server Running"
-          echo "Server IP: 10.0.0.1"
-          echo "Password: MySecretPass123"
+          cat > index.php << 'EOF'
+          <?php
+          $url = $_GET['url'] ?? '';
+          if ($url) {
+              $ch = curl_init();
+              curl_setopt($ch, CURLOPT_URL, $url);
+              curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+              curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+              curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
+              curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+              $content = curl_exec($ch);
+              curl_close($ch);
+              echo $content;
+          } else {
+          ?>
+          <!DOCTYPE html>
+          <html>
+          <head><title>GitHub Proxy</title></head>
+          <body style="font-family:Arial;text-align:center;padding:50px">
+          <h1>🌐 GitHub Web Proxy</h1>
+          <form method="get">
+              <input type="text" name="url" placeholder="https://google.com" size="50">
+              <button type="submit">Go</button>
+          </form>
+          </body>
+          </html>
+          <?php } ?>
+          EOF
 
-      - name: Install Cloudflared for Public Access
+      - name: Install LocalTunnel
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared-linux-amd64
-          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+          npm install -g localtunnel
+
+      - name: Run Proxy
+        run: |
+          php -S 0.0.0.0:8080 &
+          sleep 3
           
-          # تونل DNS را از طریق Cloudflare暴露 کن
-          cloudflared tunnel --url dns://localhost:53 &
-          sleep 10
+          lt --port 8080 --subdomain githubwebproxy >> tunnel.log 2>&1 &
+          sleep 15
           
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "DNS Tunnel Public URL: $TUNNEL_URL"
+          TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.loca\.lt' tunnel.log | head -1)
+          
+          echo "========================================="
+          echo "✅ Web Proxy آماده است!"
+          echo "========================================="
+          echo "لینک را در مرورگر خود باز کن:"
+          echo "$TUNNEL_URL"
+          echo "========================================="
+          
+          tail -f /dev/null
