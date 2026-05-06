@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: master  # 👈 مهم: checkout شاخه master
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -101,7 +102,6 @@ jobs:
           
           rm -f videos_info.json
           
-          # تابع پردازش
           process_video() {
             url="$1"
             index="$2"
@@ -113,7 +113,6 @@ jobs:
           }
           export -f process_video
           
-          # اجرای موازی با 5 ترد
           cat -n video_pages.txt | xargs -P 5 -I {} bash -c 'process_video "$(echo {})"' | jq -s '.' > videos_info.json
           
           COUNT=$(cat videos_info.json | jq '. | length')
@@ -195,9 +194,8 @@ jobs:
           git config user.email "actions@github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           
-          # دریافت آخرین تغییرات
           git fetch origin
-          git checkout main || git checkout master
+          git checkout master || git checkout -b master
           
           git add output/ .github/workflows/download-video.yml
           
@@ -205,8 +203,8 @@ jobs:
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
-            git push origin HEAD:main --force-with-lease || git push origin HEAD:master --force-with-lease
-            echo "✅ فایل‌ها با موفقیت ذخیره شدند"
+            git push origin HEAD:master --force-with-lease
+            echo "✅ فایل‌ها با موفقیت در شاخه master ذخیره شدند"
           fi
 
       - name: آپلود به عنوان Artifact
