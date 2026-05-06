@@ -25,11 +25,15 @@ jobs:
           npm init -y
           npm install puppeteer
 
-      - name: ساخت اسکریپت استخراج لینک‌ها (اصلاح شده)
+      - name: ساخت اسکریپت استخراج لینک‌ها (اصلاح شده بدون waitForTimeout)
         run: |
           cat > extract.js << 'EOF'
           const puppeteer = require('puppeteer');
           const fs = require('fs');
+          
+          function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+          }
           
           (async () => {
             const url = process.argv[2];
@@ -42,13 +46,11 @@ jobs:
             
             const page = await browser.newPage();
             
-            // تنظیم User-Agent واقعی
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
             
             const videoUrls = new Set();
             const pageVideoLinks = [];
             
-            // مانیتور کردن درخواست‌های شبکه
             page.on('request', request => {
               const requestUrl = request.url();
               if (requestUrl.match(/\.(mp4|m3u8|ts|flv|webm|mkv|avi|mov)(\?|$)/i) ||
@@ -65,28 +67,24 @@ jobs:
             
             console.log('Loading page:', url);
             
-            // افزایش زمان بارگذاری
             await page.goto(url, { 
               waitUntil: 'networkidle2', 
               timeout: 120000 
             });
             
-            // انتظار برای لود شدن کامل
-            await page.waitForTimeout(5000);
+            // استفاده از sleep به جای waitForTimeout
+            await sleep(5000);
             
-            // اسکرول بیشتر برای لود شدن همه محتوا
             console.log('Scrolling page...');
             for (let i = 0; i < 10; i++) {
               await page.evaluate(() => {
                 window.scrollBy(0, window.innerHeight);
               });
-              await new Promise(resolve => setTimeout(resolve, 2000));
+              await sleep(2000);
             }
             
-            // انتظار برای بارگذاری مجدد
-            await page.waitForTimeout(3000);
+            await sleep(3000);
             
-            // استخراج لینک‌ها از المنت‌های مختلف
             const links = await page.$$eval('a, video, source, iframe', (elements) => {
               const results = [];
               elements.forEach(el => {
@@ -118,7 +116,6 @@ jobs:
               return results;
             });
             
-            // فیلتر لینک‌های ویدیویی
             const videoPatterns = [
               /view_video\.php/i, /\/video\//i, /\/watch/i, /\/v\//i,
               /\/embed\//i, /\.mp4/i, /\.m3u8/i, /\.ts/i, /player/i
@@ -157,14 +154,12 @@ jobs:
         run: |
           PAGE_URL="${{ github.event.inputs.page_url }}"
           
-          # حذف پوشه قبلی و ایجاد پوشه جدید file
           rm -rf file 2>/dev/null || true
           mkdir -p file/screenshots
           
           echo "در حال استخراج لینک‌ها از: $PAGE_URL"
           node extract.js "$PAGE_URL" "file/extracted_links.json"
           
-          # بررسی وجود فایل JSON
           if [ ! -f "file/extracted_links.json" ]; then
             echo "❌ خطا: فایل extracted_links.json ساخته نشد"
             exit 1
@@ -180,12 +175,6 @@ jobs:
           echo "لینک‌های مستقیم: $DIRECT_COUNT"
           echo "═══════════════════════════════════════════════════════════"
           
-          # اگر لینک مستقیم وجود نداشت، از لینک‌های صفحات فیلم استفاده کن
-          if [ "$DIRECT_COUNT" -eq 0 ]; then
-            echo "⚠️ هیچ لینک مستقیمی پیدا نشد، از لینک‌های صفحات فیلم استفاده می‌شود"
-          fi
-          
-          # ایجاد فایل video_links.txt (مثل کد شما)
           echo "═══════════════════════════════════════════════════════════" > "file/video_links.txt"
           echo "لیست لینک‌های فیلم‌ها" >> "file/video_links.txt"
           echo "آدرس صفحه: $PAGE_URL" >> "file/video_links.txt"
@@ -193,7 +182,6 @@ jobs:
           echo "═══════════════════════════════════════════════════════════" >> "file/video_links.txt"
           echo "" >> "file/video_links.txt"
           
-          # لینک‌های مستقیم
           if [ "$DIRECT_COUNT" -gt 0 ]; then
             echo "🎬 لینک‌های مستقیم پیدا شده:" >> "file/video_links.txt"
             echo "════════════════════════════════════" >> "file/video_links.txt"
@@ -202,15 +190,12 @@ jobs:
             echo "" >> "file/video_links.txt"
           fi
           
-          # لینک‌های صفحات فیلم (مثل کد شما)
           echo "📄 لینک‌های صفحات فیلم:" >> "file/video_links.txt"
           echo "═══════════════════════════════════════════════════════════" >> "file/video_links.txt"
           cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "file/video_links.txt"
           
-          # ذخیره لینک‌های صفحات فیلم
           cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "file/video_pages.txt"
           
-          # دریافت اطلاعات دقیق فیلم‌ها با yt-dlp
           if [ "$VIDEO_COUNT" -gt 0 ]; then
             echo "در حال دریافت اطلاعات دقیق فیلم‌ها..."
             echo "[" > "file/videos_info.json"
@@ -269,7 +254,7 @@ jobs:
           node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png"
           echo "✅ اسکرین‌شات گرفته شد"
 
-      - name: ایجاد فایل YAML پویا برای دانلود
+      - name: ایجاد فایل YAML پویا
         run: |
           TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length' 2>/dev/null || echo "0")
           
@@ -336,14 +321,14 @@ jobs:
 
       - name: نمایش نتایج
         run: |
-          VIDEO_COUNT=$(cat "file/extracted_links.json" 2>/dev/null | jq -r '.pageVideoLinks | length' || echo "0")
+          VIDEO_COUNT=$(cat "file/videos_info.json" 2>/dev/null | jq '. | length' || echo "0")
           echo ""
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ استخراج با موفقیت انجام شد!"
           echo "═══════════════════════════════════════════════════════════"
           echo ""
           echo "📁 پوشه نتایج: file/"
-          echo "🎬 تعداد لینک‌های فیلم: $VIDEO_COUNT"
+          echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
           echo "📸 اسکرین‌شات: file/screenshots/fullpage.png"
           echo ""
           echo "═══════════════════════════════════════════════════════════"
