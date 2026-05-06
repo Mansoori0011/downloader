@@ -1,4 +1,4 @@
-name: Download Page and Save to Custom Folder
+name: Download Page with Browser Headers
 
 on:
   workflow_dispatch:
@@ -24,43 +24,68 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Install monolith
+      - name: Install required tools
         run: |
-          wget https://github.com/Y2Z/monolith/releases/download/v2.8.3/monolith-gnu-linux-x86_64 -O monolith
-          chmod +x monolith
-          sudo mv monolith /usr/local/bin/
+          sudo apt-get update
+          sudo apt-get install -y wget curl
       
-      - name: Create folder and download page
+      - name: Create folder and download with headers
         run: |
-          # ایجاد پوشه جدید
+          # ایجاد پوشه
           mkdir -p ${{ github.event.inputs.target_folder }}
           
-          # دانلود صفحه به صورت فایل HTML تکی
-          monolith ${{ github.event.inputs.url }} \
-            --no-audio \
-            --no-video \
-            --no-fonts \
-            --isolate \
-            --output ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+          # روش ۱: دانلود با wget و User-Agent موبایل
+          wget \
+            --user-agent="Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" \
+            --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+            --header="Accept-Language: en-US,en;q=0.5" \
+            --header="Accept-Encoding: gzip, deflate, br" \
+            --header="DNT: 1" \
+            --header="Connection: keep-alive" \
+            --header="Upgrade-Insecure-Requests: 1" \
+            --header="Sec-Fetch-Dest: document" \
+            --header="Sec-Fetch-Mode: navigate" \
+            --header="Sec-Fetch-Site: none" \
+            --header="Sec-Fetch-User: ?1" \
+            --header="Cache-Control: max-age=0" \
+            --tries=3 \
+            --timeout=30 \
+            --retry-connrefused \
+            --waitretry=5 \
+            --no-check-certificate \
+            --output-document ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html \
+            "${{ github.event.inputs.url }}" || true
           
-          # نمایش اطلاعات فایل
-          echo "✅ صفحه با موفقیت دانلود شد"
-          echo "📁 مسیر: ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html"
-          echo "📦 حجم فایل:"
-          ls -lh ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+          # روش ۲: اگر wget ناموفق بود، با curl امتحان کن
+          if [ ! -s ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html ]; then
+            echo "⚠️ wget ناموفق بود، تلاش با curl..."
+            curl -L \
+              -H "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              -H "Accept-Encoding: gzip, deflate, br" \
+              -o ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html \
+              "${{ github.event.inputs.url }}" || true
+          fi
+          
+          # بررسی نتیجه
+          if [ -s ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html ]; then
+            echo "✅ دانلود موفق بود"
+            echo "📦 حجم فایل:"
+            ls -lh ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+          else
+            echo "❌ دانلود ناموفق - احتمالاً سایت نیاز به احراز هویت دارد"
+            # ایجاد فایل با پیام خطا
+            echo "<html><body><h1>⚠️ Download Failed</h1><p>This site blocks automated downloads.</p><p>URL: ${{ github.event.inputs.url }}</p></body></html>" > ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+            exit 1
+          fi
       
-      - name: Commit and push to repository
+      - name: Commit and push
         run: |
           git config --global user.name 'GitHub Actions Bot'
           git config --global user.email 'actions@github.com'
-          
           git add ${{ github.event.inputs.target_folder }}/
-          git commit -m "📥 Add offline page: ${{ github.event.inputs.filename }}.html from ${{ github.event.inputs.url }}"
+          git commit -m "📥 Download page: ${{ github.event.inputs.filename }}"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Show download link
-        run: |
-          echo "🔗 لینک دانلود مستقیم:"
-          echo "https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html"
