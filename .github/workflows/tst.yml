@@ -1,4 +1,4 @@
-name: 🌐b
+name: 🌐 4-Browse the Web
 
 on:
   workflow_dispatch:
@@ -77,13 +77,11 @@ jobs:
             console.log('Loading page for video extraction:', url);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             
-            // Scroll to load all content
             for (let i = 0; i < 3; i++) {
               await page.evaluate(() => window.scrollBy(0, window.innerHeight));
               await new Promise(r => setTimeout(r, 1000));
             }
             
-            // Extract video links
             const videoLinks = await page.evaluate(() => {
               const results = [];
               const seen = new Set();
@@ -92,18 +90,10 @@ jobs:
                 const href = link.href;
                 const title = link.innerText?.trim() || link.title || '';
                 
-                if (href && (
-                  href.includes('/video/') || 
-                  href.includes('/watch') || 
-                  href.includes('/v/') ||
-                  href.includes('/view_video.php')
-                )) {
+                if (href && (href.includes('/video/') || href.includes('/watch') || href.includes('/v/') || href.includes('/view_video.php'))) {
                   if (!seen.has(href)) {
                     seen.add(href);
-                    results.push({
-                      title: title.substring(0, 100) || 'No title',
-                      url: href
-                    });
+                    results.push({ title: title.substring(0, 100) || 'No title', url: href });
                   }
                 }
               });
@@ -208,22 +198,21 @@ jobs:
 
           VIDEO_COUNT=$(cat "$VIDEOS_FOLDER/video_links.json" 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" || echo "0")
           
-          cat > "$VIDEOS_FOLDER/video_links.md" << EOF
-          ## 🎬 Extracted Video Links ($VIDEO_COUNT videos)
-
-          EOF
+          echo "## 🎬 Extracted Video Links ($VIDEO_COUNT videos)" > "$VIDEOS_FOLDER/video_links.md"
+          echo "" >> "$VIDEOS_FOLDER/video_links.md"
           
           if [ -f "$VIDEOS_FOLDER/video_links.json" ]; then
-            cat "$VIDEOS_FOLDER/video_links.json" | python3 -c "
-import sys,json
-data=json.load(sys.stdin)
-for i,item in enumerate(data):
-    title=item.get('title','No title')[:50]
-    url=item.get('url','')
+            python3 << 'PYEOF' >> "$VIDEOS_FOLDER/video_links.md"
+import sys, json
+with open('$VIDEOS_FOLDER/video_links.json', 'r') as f:
+    data = json.load(f)
+for i, item in enumerate(data):
+    title = item.get('title', 'No title')[:50]
+    url = item.get('url', '')
     print(f'{i+1}. **{title}**')
     print(f'   🔗 [Link]({url})')
     print()
-" >> "$VIDEOS_FOLDER/video_links.md"
+PYEOF
           fi
 
           MEDIA_COUNT=$(find "$MEDIA_FOLDER" -type f 2>/dev/null | wc -l)
@@ -284,7 +273,7 @@ for i,item in enumerate(data):
       - name: Commit and push
         run: |
           git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git config.user.email "github-actions@github.com"
           git add pages/ browse.md
           if git diff --staged --quiet; then
             echo "Nothing to commit"
