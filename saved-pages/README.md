@@ -1,19 +1,17 @@
 # 📱 صفحه آفلاین کامل با تصاویر
 
 **آدرس:** https://pornhub.com  
-**فرمت:** mht  
-**تاریخ:** 2026-05-07 01:58
+**فرمت:** html-all  
+**تاریخ:** 2026-05-07 02:01
 
 ## 📂 فایل‌های دانلود شده:
 
-### 📄 فایل MHT (پیشنهادی برای گوشی)
-- **حاوی تمام تصاویر** در یک فایل
-- بدون نیاز به extraction
-- فقط با مرورگر باز کنید
-
-⚠️ **توجه:** فایل MHT فقط با Internet Explorer، Edge قدیمی، یا Opera باز می‌شود
 
 
+### 📦 پکیج کامل
+- فایل **ZIP** حاوی HTML + تمام تصاویر
+- پوشه `_files` شامل تمام منابع
+- مناسب برای آرشیو کامل
 
 ## 📱 راهنمای باز کردن:
 
@@ -30,7 +28,7 @@
 ## 🔗 لینک‌های دانلود:
 
 ```
-https://github.com/Mansoori0011/downloader/raw/main/saved-pages/offline-page.mht
+https://github.com/Mansoori0011/downloader/raw/main/saved-pages/offline-page.html
 ```
 
 ---
