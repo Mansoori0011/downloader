@@ -18,15 +18,9 @@ jobs:
         with:
           ref: master
 
-      - name: نصب ابزارها
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl
-
-      - name: دانلود سایت
+      - name: دانلود سایت با curl
         run: |
           URL="${{ github.event.inputs.url }}"
-          SITE_NAME=$(echo "$URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
           
           rm -rf offline-site
           mkdir -p offline-site
@@ -35,41 +29,44 @@ jobs:
           
           echo "در حال دانلود: $URL"
           
-          wget --user-agent="Mozilla/5.0" \
-               --page-requisites \
-               --convert-links \
-               --adjust-extension \
-               --no-parent \
-               --wait=2 \
-               --limit-rate=200K \
-               -r -l 1 "$URL" 2>&1 | tail -20
+          # دانلود با هدرهای کامل (شبیه مرورگر)
+          curl -L -k \
+               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" \
+               -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+               -H "Accept-Language: en-US,en;q=0.5" \
+               -H "Accept-Encoding: gzip, deflate, br" \
+               -H "Connection: keep-alive" \
+               -H "Upgrade-Insecure-Requests: 1" \
+               -H "Sec-Fetch-Dest: document" \
+               -H "Sec-Fetch-Mode: navigate" \
+               -H "Sec-Fetch-Site: none" \
+               -H "Sec-Fetch-User: ?1" \
+               -o index.html \
+               "$URL"
+          
+          # بررسی وجود فایل
+          if [ -f "index.html" ] && [ -s "index.html" ]; then
+            echo "✅ دانلود موفق: $(wc -c < index.html) bytes"
+          else
+            echo "❌ دانلود ناموفق"
+            exit 1
+          fi
           
           cd ..
-          
-          echo "✅ دانلود انجام شد"
-          echo "فایل‌های موجود در پوشه offline-site:"
-          ls -la offline-site/
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config.user.email "actions@github.com"
           
-          # بررسی وجود فایل
-          if [ -d "offline-site" ] && [ "$(ls -A offline-site)" ]; then
-            echo "✅ پوشه offline-site دارای فایل است"
-            git add offline-site/
-            git status
-            git commit -m "دانلود آفلاین از ${{ github.event.inputs.url }}"
-            git push origin master
-            echo "✅ فایل‌ها با موفقیت push شدند"
-          else
-            echo "❌ پوشه offline-site خالی است یا وجود ندارد"
-            exit 1
-          fi
+          git add offline-site/
+          git commit -m "دانلود صفحه از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git push origin master
+          
+          echo "✅ فایل در offline-site/index.html ذخیره شد"
 
-      - name: آپلود به عنوان Artifact (پشتیبان)
+      - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: offline-site-backup
+          name: downloaded-page
           path: offline-site/
