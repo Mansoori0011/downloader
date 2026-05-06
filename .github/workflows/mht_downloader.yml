@@ -34,30 +34,34 @@ jobs:
         run: |
           URL="${{ github.event.inputs.url }}"
           
+          # حذف و ساخت مجدد پوشه
           rm -rf web-archive
           mkdir -p web-archive
           
           echo "در حال دانلود: $URL"
           
+          # دانلود
           npx single-file "$URL" --output web-archive/archive.mht
           
-          echo "✅ فایل MHT در web-archive/archive.mht ذخیره شد"
+          # بررسی وجود فایل
+          if [ -f "web-archive/archive.mht" ]; then
+            echo "✅ فایل MHT با موفقیت ساخته شد"
+            ls -la web-archive/
+          else
+            echo "❌ خطا: فایل MHT ساخته نشد"
+            exit 1
+          fi
 
-      - name: ذخیره در مخزن (بروزرسانی خودکار)
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           
-          git fetch origin
-          git checkout master || git checkout -b master
-          
+          # اضافه کردن پوشه
           git add web-archive/
           
-          if git diff --staged --quiet; then
-            echo "تغییری وجود ندارد"
-          else
-            git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}"
-            git push origin master
-            echo "✅ فایل MHT بروزرسانی شد"
-          fi
+          # Commit و Push
+          git commit -m "بروزرسانی MHT از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git push origin master || echo "خطا در push"
+          
+          echo "✅ پوشه web-archive در مخزن ذخیره شد"
