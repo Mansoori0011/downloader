@@ -1,84 +1,188 @@
-name: ساخت صفحه گوگل زنده
+name: YouTube Live Browser via GitHub
 
 on:
   workflow_dispatch:
+    inputs:
+      youtube_url:
+        description: 'آدرس یوتیوب (مثال: https://www.youtube.com/watch?v=dQw4w9WgXcQ)'
+        required: true
+        type: string
+        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 
 jobs:
-  create-iframe:
+  youtube-browser:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: ساخت صفحه HTML با iframe
+      - name: نصب ابزارها
         run: |
-          cat > google-live.html << 'EOF'
+          sudo apt-get update
+          sudo apt-get install -y php-cli php-curl wget unzip
+
+      - name: ساخت صفحه پخش یوتیوب
+        run: |
+          YOUTUBE_URL="${{ github.event.inputs.youtube_url }}"
+          
+          cat > youtube-player.html << EOF
           <!DOCTYPE html>
           <html lang="fa">
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Google Live - جستجوی زنده</title>
+              <title>YouTube Live Player - پخش زنده از طریق گیت‌هاب</title>
               <style>
                   * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #202124; height: 100vh; display: flex; flex-direction: column; }
-                  .header { background: #202124; padding: 15px; text-align: center; border-bottom: 1px solid #5f6368; }
-                  h1 { color: #e8eaed; font-size: 24px; }
-                  .search-bar { padding: 15px; background: #303134; text-align: center; }
-                  input { width: 500px; max-width: 90%; padding: 12px 20px; font-size: 16px; border: none; border-radius: 24px; background: #202124; color: #e8eaed; outline: none; border: 1px solid #5f6368; }
-                  input:focus { border-color: #8ab4f8; }
-                  iframe { flex: 1; width: 100%; border: none; background: white; }
-                  .info { background: #303134; color: #9aa0a6; text-align: center; padding: 8px; font-size: 12px; border-top: 1px solid #5f6368; }
-                  .btn { background: #8ab4f8; color: #202124; border: none; padding: 12px 25px; border-radius: 24px; cursor: pointer; margin-left: 10px; font-weight: bold; }
-                  .btn:hover { background: #aec9fa; }
+                  body { 
+                      font-family: Arial, sans-serif; 
+                      background: #0f0f0f; 
+                      min-height: 100vh;
+                      display: flex;
+                      justify-content: center;
+                      align-items: center;
+                      padding: 20px;
+                  }
+                  .container {
+                      max-width: 1200px;
+                      width: 100%;
+                      background: #1f1f1f;
+                      border-radius: 20px;
+                      overflow: hidden;
+                      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+                  }
+                  .video-container {
+                      position: relative;
+                      width: 100%;
+                      padding-bottom: 56.25%;
+                      background: #000;
+                  }
+                  .video-container iframe {
+                      position: absolute;
+                      top: 0;
+                      left: 0;
+                      width: 100%;
+                      height: 100%;
+                      border: none;
+                  }
+                  .info {
+                      padding: 20px;
+                      background: #1f1f1f;
+                      color: #fff;
+                  }
+                  h2 {
+                      font-size: 20px;
+                      margin-bottom: 10px;
+                  }
+                  .url-box {
+                      background: #2f2f2f;
+                      padding: 10px;
+                      border-radius: 8px;
+                      margin-top: 10px;
+                      word-break: break-all;
+                      font-size: 12px;
+                      color: #aaa;
+                  }
+                  .status {
+                      background: #2e7d32;
+                      padding: 8px 15px;
+                      border-radius: 20px;
+                      display: inline-block;
+                      font-size: 12px;
+                      margin-top: 10px;
+                  }
+                  .footer {
+                      text-align: center;
+                      padding: 15px;
+                      background: #1f1f1f;
+                      border-top: 1px solid #2f2f2f;
+                      color: #888;
+                      font-size: 12px;
+                  }
+                  input {
+                      width: 70%;
+                      padding: 10px;
+                      border-radius: 25px;
+                      border: none;
+                      background: #2f2f2f;
+                      color: #fff;
+                      margin-right: 10px;
+                  }
+                  button {
+                      padding: 10px 20px;
+                      border-radius: 25px;
+                      border: none;
+                      background: #ff0000;
+                      color: white;
+                      cursor: pointer;
+                      font-weight: bold;
+                  }
+                  button:hover {
+                      background: #cc0000;
+                  }
+                  .search-section {
+                      padding: 15px;
+                      background: #1f1f1f;
+                      border-bottom: 1px solid #2f2f2f;
+                      text-align: center;
+                  }
               </style>
           </head>
           <body>
-              <div class="header">
-                  <h1>🔍 Google Live Search</h1>
+              <div class="container">
+                  <div class="search-section">
+                      <form method="get" action="">
+                          <input type="text" name="url" placeholder="لینک جدید یوتیوب را وارد کن..." value="$YOUTUBE_URL">
+                          <button type="submit">🎬 پخش</button>
+                      </form>
+                  </div>
+                  
+                  <div class="video-container">
+                      <iframe src="https://www.youtube.com/embed/$(echo "$YOUTUBE_URL" | grep -oP 'v=\K[^&]+')" 
+                              frameborder="0" 
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                              allowfullscreen>
+                      </iframe>
+                  </div>
+                  
+                  <div class="info">
+                      <h2>🎥 پخش زنده از طریق سرور گیت‌هاب</h2>
+                      <div class="url-box">
+                          📍 آدرس فعلی: $YOUTUBE_URL
+                      </div>
+                      <div class="status">
+                          ✅ متصل به سرور گیت‌هاب
+                      </div>
+                      <div style="margin-top: 15px; font-size: 14px; color: #aaa;">
+                          💡 این صفحه از طریق سرورهای ابری گیت‌هاب اجرا می‌شود | فیلترشکن نیست، ولی ترافیک از سرور گیت‌هاب عبور می‌کند
+                      </div>
+                  </div>
+                  
+                  <div class="footer">
+                      🔗 GitHub Actions Live Player | ویدیوها از طریق سرور گیت‌هاب پخش می‌شوند
+                  </div>
               </div>
-              
-              <div class="search-bar">
-                  <input type="text" id="searchInput" placeholder="جستجو در گوگل..." onkeypress="if(event.key==='Enter') searchGoogle()">
-                  <button class="btn" onclick="searchGoogle()">جستجو</button>
-              </div>
-              
-              <iframe id="googleFrame" src="https://www.google.com"></iframe>
-              
-              <div class="info">
-                  📌 این صفحه مستقیماً از مخزن گیت‌هاب باز شده است | جستجوهای شما در iframe انجام می‌شود
-              </div>
-              
-              <script>
-                  function searchGoogle() {
-                      const query = document.getElementById('searchInput').value;
-                      if (query) {
-                          const iframe = document.getElementById('googleFrame');
-                          iframe.src = 'https://www.google.com/search?q=' + encodeURIComponent(query);
-                      }
-                  }
-              </script>
           </body>
           </html>
           EOF
 
-      - name: ذخیره در مخزن
+      - name: ذخیره در مخزن و نمایش لینک
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add google-live.html
-          git commit -m "Add Google live search page" || echo "No changes"
+          git add youtube-player.html
+          git commit -m "Add YouTube live player via GitHub" || echo "No changes"
           git push
           
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "✅ صفحه گوگل زنده ساخته شد!"
+          echo "✅ پخش‌کننده یوتیوب آماده است!"
           echo "═══════════════════════════════════════════════════════════"
           echo ""
           echo "🔗 لینک صفحه (در مرورگر باز کن):"
-          echo "   https://github.com/${{ github.repository }}/blob/main/google-live.html"
+          echo "   https://github.com/${{ github.repository }}/blob/main/youtube-player.html"
           echo ""
-          echo "📌 بعد از باز شدن، روی دکمه 'Raw' یا 'Download' کلیک نکن!"
-          echo "   فقط لینک بالا را باز کن و از صفحه استفاده کن."
+          echo "📌 می‌توانی هر لینک یوتیوبی را وارد کنی و ببینی."
+          echo "⚠️ توجه: این فقط یک پخش‌کننده است، فیلترشکن نیست!"
           echo "═══════════════════════════════════════════════════════════"
