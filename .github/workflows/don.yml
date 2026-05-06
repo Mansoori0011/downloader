@@ -1,0 +1,127 @@
+name: دانلود فیلم با Puppeteer
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'لینک فیلم (view_video.php?viewkey=...)'
+        required: true
+        type: string
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: نصب ابزارها
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl wget
+          npm init -y
+          npm install puppeteer
+
+      - name: استخراج لینک مستقیم و دانلود
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          
+          cat > extract.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          const { exec } = require('child_process');
+          
+          (async () => {
+            const url = process.argv[2];
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            const page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+            
+            console.log('در حال بارگذاری:', url);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            
+            // منتظر بمان تا پلیر لود شود
+            await new Promise(r => setTimeout(r, 5000));
+            
+            // استخراج لینک ویدیو از تگ video
+            const videoUrl = await page.evaluate(() => {
+              const video = document.querySelector('video');
+              if (video && video.src) {
+                return video.src;
+              }
+              // جستجو در source ها
+              const source = document.querySelector('source');
+              if (source && source.src) {
+                return source.src;
+              }
+              return null;
+            });
+            
+            if (videoUrl) {
+              console.log('✅ لینک مستقیم پیدا شد:', videoUrl);
+              console.log('در حال دانلود...');
+              
+              // دانلود با wget
+              exec(`wget -O video.mp4 "${videoUrl}"`, (error, stdout, stderr) => {
+                if (error) {
+                  console.error('خطا در دانلود:', error);
+                } else {
+                  console.log('✅ دانلود کامل شد: video.mp4');
+                }
+              });
+            } else {
+              console.log('❌ لینک مستقیم پیدا نشد');
+              console.log('در حال جستجوی شبکه...');
+              
+              // مانیتور درخواست‌های شبکه
+              const requests = [];
+              page.on('request', request => {
+                const reqUrl = request.url();
+                if (reqUrl.includes('.mp4') || reqUrl.includes('.m3u8')) {
+                  requests.push(reqUrl);
+                  console.log('🎬 پیدا شد:', reqUrl);
+                }
+              });
+              
+              await page.reload({ waitUntil: 'networkidle2' });
+              await new Promise(r => setTimeout(r, 10000));
+              
+              if (requests.length > 0) {
+                console.log('لینک پیدا شده:', requests[0]);
+                exec(`wget -O video.mp4 "${requests[0]}"`, (error) => {
+                  if (error) console.error('خطا:', error);
+                  else console.log('✅ دانلود شد');
+                });
+              }
+            }
+            
+            await browser.close();
+          })();
+          EOF
+          
+          node extract.js "$URL"
+          
+          # آپلود فایل
+          echo "FILE_READY=true" >> $GITHUB_ENV
+
+      - name: ذخیره در مخزن
+        if: env.FILE_READY == 'true'
+        run: |
+          if [ -f video.mp4 ]; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add video.mp4
+            git commit -m "دانلود فیلم" || echo "تغییری وجود ندارد"
+            git push
+          fi
+
+      - name: آپلود Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-video
+          path: video.mp4
