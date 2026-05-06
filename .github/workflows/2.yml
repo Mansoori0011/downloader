@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: 'https://www.example.com'
+      max_videos:
+        description: 'حداکثر تعداد فیلم برای استخراج (پیش‌فرض: 10)'
+        required: false
+        type: string
+        default: '10'
 
 jobs:
   extract-all:
@@ -76,33 +81,52 @@ jobs:
       - name: اجرای اسکریپت و استخراج لینک
         run: |
           PAGE_URL="${{ github.event.inputs.page_url }}"
+          MAX_VIDEOS="${{ github.event.inputs.max_videos }}"
           rm -rf output || true
           mkdir -p output/screenshots
           echo "در حال استخراج لینک از: $PAGE_URL"
           node extract.js "$PAGE_URL" "output/extracted_links.json"
           
-          VIDEO_COUNT=$(cat output/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
-          echo "تعداد فیلم‌های پیدا شده: $VIDEO_COUNT"
+          TOTAL_FOUND=$(cat output/extracted_links.json | jq -r '.pageVideoLinks | length' 2>/dev/null || echo "0")
+          echo "تعداد فیلم‌های پیدا شده: $TOTAL_FOUND"
+          
+          # محدود کردن به تعداد دلخواه
+          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$MAX_VIDEOS] | .[] | .url" 2>/dev/null > output/video_pages.txt
+          LIMITED_COUNT=$(cat output/video_pages.txt | wc -l)
+          echo "تعداد فیلم‌های انتخاب شده برای پردازش: $LIMITED_COUNT"
           
           echo "═══════════════════════════════════════════════════════════" > output/video_links.txt
           echo "لیست لینک‌های فیلم" >> output/video_links.txt
           echo "آدرس: $PAGE_URL" >> output/video_links.txt
           echo "تاریخ: $(date)" >> output/video_links.txt
+          echo "تعداد: $LIMITED_COUNT از $TOTAL_FOUND" >> output/video_links.txt
           echo "═══════════════════════════════════════════════════════════" >> output/video_links.txt
           echo "" >> output/video_links.txt
           
-          cat output/extracted_links.json | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> output/video_links.txt
-          cat output/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > output/video_pages.txt
+          cat output/extracted_links.json | jq -r ".pageVideoLinks[:$MAX_VIDEOS] | .[] | \"عنوان: \" + .title + \"\nلینک: \" + .url + \"\n---\"" 2>/dev/null >> output/video_links.txt
 
-      - name: دریافت اطلاعات فیلم (فوق سریع با yt-dlp گروهی)
+      - name: دریافت اطلاعات فیلم (تکی و پایدار)
         run: |
           cd output
-          
           TOTAL=$(cat video_pages.txt | wc -l)
-          echo "در حال دریافت اطلاعات $TOTAL فیلم..."
+          echo "در حال دریافت اطلاعات $TOTAL فیلم (تکی و پایدار)..."
           
-          # yt-dlp همه لینک‌ها را یکجا پردازش می‌کند (خیلی سریع)
-          yt-dlp --dump-json --batch-file video_pages.txt 2>/dev/null | jq -c '{title, webpage_url, duration}' | nl -v 1 -w1 -s',' | sed 's/^/  {"index":/' | sed 's/,/, /' | jq -s '.' > videos_info.json
+          echo "[" > videos_info.json
+          COUNTER=0
+          while IFS= read -r url; do
+            COUNTER=$((COUNTER + 1))
+            echo "دریافت اطلاعات فیلم $COUNTER از $TOTAL"
+            
+            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
+            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
+            TITLE=${TITLE:-"فیلم $COUNTER"}
+            DURATION=${DURATION:-"نامشخص"}
+            
+            echo "  {\"index\":$COUNTER,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}," >> videos_info.json
+          done < video_pages.txt
+          
+          sed -i '$ s/,$//' videos_info.json
+          echo "]" >> videos_info.json
           
           COUNT=$(cat videos_info.json | jq '. | length')
           echo "✅ اطلاعات $COUNT فیلم دریافت شد"
@@ -165,7 +189,7 @@ jobs:
                   run: |
                     VIDEO_INFO=\$(cat output/videos_info.json)
                     V_NUM="\${{ github.event.inputs.video_number }}"
-                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].webpage_url")
+                    VIDEO_URL=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].url")
                     VIDEO_TITLE=\$(echo "\$VIDEO_INFO" | jq -r ".[\$((V_NUM-1))].title")
                     echo "در حال دانلود: \$VIDEO_TITLE"
                     yt-dlp -f best -o "video_\${V_NUM}.mp4" "\$VIDEO_URL"
