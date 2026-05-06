@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: master  # 👈 مهم: checkout شاخه master
+          ref: master
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -94,26 +94,47 @@ jobs:
           cat output/extracted_links.json | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> output/video_links.txt
           cat output/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > output/video_pages.txt
 
-      - name: دریافت اطلاعات فیلم (5 ترد همزمان)
+      - name: دریافت اطلاعات فیلم (5 ترد همزمان - پایدار)
         run: |
           cd output
           TOTAL=$(cat video_pages.txt | wc -l)
           echo "در حال دریافت اطلاعات $TOTAL فیلم با 5 ترد همزمان..."
           
-          rm -f videos_info.json
+          rm -f videos_info.json videos_info_part_*.json
           
-          process_video() {
-            url="$1"
-            index="$2"
-            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
-            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
-            TITLE=${TITLE:-"فیلم $index"}
-            DURATION=${DURATION:-"نامشخص"}
-            echo "{\"index\":$index,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}"
-          }
-          export -f process_video
+          # تقسیم فایل به 5 قسمت
+          split -n l/5 -d video_pages.txt video_pages_part_
           
-          cat -n video_pages.txt | xargs -P 5 -I {} bash -c 'process_video "$(echo {})"' | jq -s '.' > videos_info.json
+          # پردازش همزمان هر قسمت
+          for part in video_pages_part_*; do
+            (
+              part_num=$(echo "$part" | sed 's/video_pages_part_//')
+              while IFS= read -r url; do
+                TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
+                DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
+                TITLE=${TITLE:-"فیلم"}
+                DURATION=${DURATION:-"نامشخص"}
+                echo "{\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}" >> videos_info_part_$part_num.json
+              done < "$part"
+            ) &
+          done
+          
+          wait
+          
+          # ترکیب نتایج و اضافه کردن شماره سریال
+          echo "[" > videos_info.json
+          INDEX=1
+          for f in $(ls videos_info_part_*.json 2>/dev/null | sort); do
+            while IFS= read -r line; do
+              echo "  {\"index\":$INDEX, $line" >> videos_info.json
+              INDEX=$((INDEX + 1))
+            done < "$f"
+            echo "," >> videos_info.json
+          done
+          sed -i '$ s/,$//' videos_info.json
+          echo "]" >> videos_info.json
+          
+          rm -f videos_info_part_*.json video_pages_part_*
           
           COUNT=$(cat videos_info.json | jq '. | length')
           echo "✅ اطلاعات $COUNT فیلم دریافت شد"
