@@ -1,10 +1,10 @@
-name: دانلود سایت به صورت آفلاین
+name: دانلود کامل صفحه وب
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس سایت مورد نظر'
+        description: 'آدرس سایت'
         required: true
         type: string
 
@@ -18,55 +18,37 @@ jobs:
         with:
           ref: master
 
-      - name: دانلود سایت با curl
+      - name: نصب wget
+        run: sudo apt-get install -y wget
+
+      - name: دانلود کامل صفحه
         run: |
           URL="${{ github.event.inputs.url }}"
+          SITE_NAME=$(echo "$URL" | awk -F/ '{print $3}')
           
-          rm -rf offline-site
-          mkdir -p offline-site
+          rm -rf "offline-$SITE_NAME"
+          mkdir -p "offline-$SITE_NAME"
           
-          cd offline-site
+          cd "offline-$SITE_NAME"
           
-          echo "در حال دانلود: $URL"
-          
-          # دانلود با هدرهای کامل (شبیه مرورگر)
-          curl -L -k \
-               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" \
-               -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
-               -H "Accept-Language: en-US,en;q=0.5" \
-               -H "Accept-Encoding: gzip, deflate, br" \
-               -H "Connection: keep-alive" \
-               -H "Upgrade-Insecure-Requests: 1" \
-               -H "Sec-Fetch-Dest: document" \
-               -H "Sec-Fetch-Mode: navigate" \
-               -H "Sec-Fetch-Site: none" \
-               -H "Sec-Fetch-User: ?1" \
-               -o index.html \
-               "$URL"
-          
-          # بررسی وجود فایل
-          if [ -f "index.html" ] && [ -s "index.html" ]; then
-            echo "✅ دانلود موفق: $(wc -c < index.html) bytes"
-          else
-            echo "❌ دانلود ناموفق"
-            exit 1
-          fi
+          wget --page-requisites \
+               --convert-links \
+               --adjust-extension \
+               --no-parent \
+               --user-agent="Mozilla/5.0" \
+               -r -l 1 "$URL"
           
           cd ..
-
-      - name: ذخیره در مخزن
-        run: |
-          git config user.name "github-actions"
-          git config.user.email "actions@github.com"
           
-          git add offline-site/
-          git commit -m "دانلود صفحه از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
-          git push origin master
+          # ایجاد فایل ZIP برای دانلود
+          zip -r "site-backup.zip" "offline-$SITE_NAME"
           
-          echo "✅ فایل در offline-site/index.html ذخیره شد"
+          echo "✅ دانلود کامل شد"
 
       - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-page
-          path: offline-site/
+          name: downloaded-site
+          path: |
+            offline-*/
+            site-backup.zip
