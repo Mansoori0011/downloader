@@ -167,11 +167,11 @@ jobs:
           - [videos_info.json](./videos_info.json)
           EOL
 
-      - name: ایجاد فایل YAML پویا برای دانلود
+      - name: ایجاد فایل YAML پویا برای دانلود (ذخیره در پوشه output)
         run: |
           TOTAL_VIDEOS=$(cat output/videos_info.json | jq '. | length' 2>/dev/null || echo "0")
-          mkdir -p .github/workflows
-          cat > .github/workflows/download-video.yml << YEOF
+          
+          cat > output/download-video.yml << YEOF
           name: دانلود فیلم انتخابی
           on:
             workflow_dispatch:
@@ -201,7 +201,9 @@ jobs:
                     name: downloaded-video
                     path: video_*.mp4
           YEOF
-          echo "فایل پویا ساخته شد"
+          
+          echo "✅ فایل پویا در output/download-video.yml ساخته شد"
+          echo "📁 برای استفاده، این فایل را به .github/workflows/ منتقل کنید"
 
       - name: ذخیره در مخزن
         run: |
@@ -212,14 +214,13 @@ jobs:
           git fetch origin
           git checkout master || git checkout -b master
           
-          git add output/ .github/workflows/download-video.yml || true
           git add output/
           
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
           else
             git commit -m "استخراج فیلم از ${{ github.event.inputs.page_url }}"
-            git push origin HEAD:master --force-with-lease || git push origin HEAD:master
+            git push origin HEAD:master
             echo "✅ فایل‌ها با موفقیت در شاخه master ذخیره شدند"
           fi
 
@@ -239,4 +240,5 @@ jobs:
           echo "📁 پوشه: output/"
           echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
           echo "📸 اسکرین‌شات: output/screenshots/fullpage.png"
+          echo "📄 فایل پویا: output/download-video.yml"
           echo "═══════════════════════════════════════════════════════════"
