@@ -1,4 +1,4 @@
-name: conf_2
+name: دانلود فیلم 
 
 on:
   workflow_dispatch:
@@ -60,44 +60,65 @@ jobs:
             exit 1
           fi
           
+          # ساخت پوشه download
+          mkdir -p download
+          
           echo "═══════════════════════════════════════════════════════════"
           echo "🎬 در حال دانلود فیلم شماره $V_NUM از $TOTAL"
           echo "📌 عنوان: ${VIDEO_TITLE:-بدون عنوان}"
           echo "🔗 لینک: $VIDEO_URL"
           echo "🎚️ کیفیت: $QUALITY"
+          echo "📁 ذخیره در: download/"
           echo "═══════════════════════════════════════════════════════════"
+          
+          cd download
           
           # انتخاب کیفیت
           case "$QUALITY" in
             "best")
               yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              FILE_NAME="video_${V_NUM}.mp4"
               ;;
             "1080p")
               yt-dlp -f "best[height<=1080]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              FILE_NAME="video_${V_NUM}.mp4"
               ;;
             "720p")
               yt-dlp -f "best[height<=720]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              FILE_NAME="video_${V_NUM}.mp4"
               ;;
             "480p")
               yt-dlp -f "best[height<=480]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              FILE_NAME="video_${V_NUM}.mp4"
               ;;
             "360p")
               yt-dlp -f "best[height<=360]" -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+              FILE_NAME="video_${V_NUM}.mp4"
               ;;
             "mp3 (فقط صدا)")
               yt-dlp -x --audio-format mp3 -o "audio_${V_NUM}.mp3" "$VIDEO_URL"
+              FILE_NAME="audio_${V_NUM}.mp3"
               ;;
           esac
           
-          echo "✅ دانلود کامل شد"
+          cd ..
+          echo "✅ دانلود کامل شد: download/${FILE_NAME}"
+      
+      - name: ایجاد فایل ZIP
+        run: |
+          cd download
+          ZIP_NAME="downloaded_files_$(date +'%Y%m%d_%H%M%S').zip"
+          zip -r "$ZIP_NAME" .
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          cd ..
       
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # افزودن فایل دانلود شده
-          git add *.mp4 *.mp3 2>/dev/null || true
+          # افزودن پوشه download و فایل ZIP
+          git add download/
           
           if git diff --staged --quiet; then
             echo "هیچ تغییر جدیدی برای commit وجود ندارد"
@@ -110,7 +131,5 @@ jobs:
       - name: آپلود به عنوان Artifact (پشتیبان)
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-video
-          path: |
-            *.mp4
-            *.mp3
+          name: downloaded-files
+          path: download/
