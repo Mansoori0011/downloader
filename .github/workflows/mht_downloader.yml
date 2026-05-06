@@ -1,4 +1,4 @@
-name: Download Page with Browser Headers
+name: Download Page with Puppeteer Browser
 
 on:
   workflow_dispatch:
@@ -15,77 +15,229 @@ on:
         description: 'نام پوشه برای ذخیره'
         required: true
         default: 'saved-pages'
+      screenshot:
+        description: 'اسکرین شات هم بگیرد؟'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
-  download-and-save:
+  download-with-browser:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Install required tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       
-      - name: Create folder and download with headers
+      - name: Install Puppeteer
         run: |
-          # ایجاد پوشه
+          npm init -y
+          npm install puppeteer
+          # نصب وابستگی‌های Chrome
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates \
+            fonts-liberation \
+            libasound2 \
+            libatk-bridge2.0-0 \
+            libatk1.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnspr4 \
+            libnss3 \
+            libu2f-udev \
+            libx11-xcb1 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            xdg-utils
+      
+      - name: Create folder and download page
+        run: |
           mkdir -p ${{ github.event.inputs.target_folder }}
           
-          # روش ۱: دانلود با wget و User-Agent موبایل
-          wget \
-            --user-agent="Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" \
-            --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
-            --header="Accept-Language: en-US,en;q=0.5" \
-            --header="Accept-Encoding: gzip, deflate, br" \
-            --header="DNT: 1" \
-            --header="Connection: keep-alive" \
-            --header="Upgrade-Insecure-Requests: 1" \
-            --header="Sec-Fetch-Dest: document" \
-            --header="Sec-Fetch-Mode: navigate" \
-            --header="Sec-Fetch-Site: none" \
-            --header="Sec-Fetch-User: ?1" \
-            --header="Cache-Control: max-age=0" \
-            --tries=3 \
-            --timeout=30 \
-            --retry-connrefused \
-            --waitretry=5 \
-            --no-check-certificate \
-            --output-document ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html \
-            "${{ github.event.inputs.url }}" || true
+          cat > download.js << 'SCRIPT'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
           
-          # روش ۲: اگر wget ناموفق بود، با curl امتحان کن
-          if [ ! -s ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html ]; then
-            echo "⚠️ wget ناموفق بود، تلاش با curl..."
-            curl -L \
-              -H "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
-              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-              -H "Accept-Language: en-US,en;q=0.9" \
-              -H "Accept-Encoding: gzip, deflate, br" \
-              -o ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html \
-              "${{ github.event.inputs.url }}" || true
-          fi
+          (async () => {
+            const url = process.env.PAGE_URL;
+            const filename = process.env.FILENAME;
+            const folder = process.env.TARGET_FOLDER;
+            const takeScreenshot = process.env.SCREENSHOT === 'true';
+            
+            console.log(`🌐 شروع دانلود: ${url}`);
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--window-size=1920,1080',
+                '--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+              ]
+            });
+            
+            const page = await browser.newPage();
+            
+            // تنظیمات اضافی
+            await page.setViewport({
+              width: 390,
+              height: 844,
+              deviceScaleFactor: 2
+            });
+            
+            // تنظیم هدرهای اضافی
+            await page.setExtraHTTPHeaders({
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+            });
+            
+            try {
+              // بارگذاری صفحه با timeout
+              await page.goto(url, {
+                waitUntil: 'networkidle2',
+                timeout: 60000
+              });
+              
+              console.log('✅ صفحه بارگذاری شد');
+              
+              // صبر برای لود شدن کامل
+              await page.waitForTimeout(5000);
+              
+              // گرفتن محتوای کامل HTML
+              const html = await page.content();
+              
+              // ذخیره HTML
+              const filePath = `${folder}/${filename}.html`;
+              fs.writeFileSync(filePath, html);
+              console.log(`💾 فایل ذخیره شد: ${filePath}`);
+              
+              // گرفتن اسکرین شات اختیاری
+              if (takeScreenshot) {
+                await page.screenshot({
+                  path: `${folder}/${filename}.png`,
+                  fullPage: true
+                });
+                console.log(`📸 اسکرین شات ذخیره شد: ${folder}/${filename}.png`);
+              }
+              
+              // استخراج و ذخیره CSS جداگانه
+              const styles = await page.evaluate(() => {
+                const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
+                let allStyles = '';
+                styleElements.forEach(el => {
+                  if (el.tagName === 'STYLE') {
+                    allStyles += el.textContent + '\n';
+                  }
+                });
+                return allStyles;
+              });
+              
+              if (styles) {
+                fs.writeFileSync(`${folder}/${filename}.css`, styles);
+                console.log(`🎨 CSS ذخیره شد: ${folder}/${filename}.css`);
+              }
+              
+              // نمایش آمار
+              const stats = fs.statSync(filePath);
+              console.log(`📊 حجم فایل HTML: ${(stats.size / 1024).toFixed(2)} KB`);
+              
+            } catch (error) {
+              console.error('❌ خطا در دانلود:', error.message);
+              
+              // ذخیره صفحه خطا
+              const errorHtml = `
+                <!DOCTYPE html>
+                <html>
+                <head><meta charset="UTF-8"><title>Download Failed</title></head>
+                <body style="font-family: Arial; padding: 20px;">
+                  <h1>⚠️ خطا در دانلود</h1>
+                  <p><strong>URL:</strong> ${url}</p>
+                  <p><strong>خطا:</strong> ${error.message}</p>
+                  <p>این سایت ممکن است دسترسی ربات‌ها را مسدود کرده باشد.</p>
+                </body>
+                </html>
+              `;
+              fs.writeFileSync(`${folder}/${filename}.html`, errorHtml);
+            } finally {
+              await browser.close();
+              console.log('🏁 مرورگر بسته شد');
+            }
+          })();
+          SCRIPT
           
-          # بررسی نتیجه
-          if [ -s ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html ]; then
-            echo "✅ دانلود موفق بود"
-            echo "📦 حجم فایل:"
-            ls -lh ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
-          else
-            echo "❌ دانلود ناموفق - احتمالاً سایت نیاز به احراز هویت دارد"
-            # ایجاد فایل با پیام خطا
-            echo "<html><body><h1>⚠️ Download Failed</h1><p>This site blocks automated downloads.</p><p>URL: ${{ github.event.inputs.url }}</p></body></html>" > ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
-            exit 1
-          fi
+          # اجرای اسکریپت
+          PAGE_URL="${{ github.event.inputs.url }}" \
+          FILENAME="${{ github.event.inputs.filename }}" \
+          TARGET_FOLDER="${{ github.event.inputs.target_folder }}" \
+          SCREENSHOT="${{ github.event.inputs.screenshot }}" \
+          node download.js
       
-      - name: Commit and push
+      - name: Fix relative paths for offline use
+        run: |
+          # اصلاح مسیرهای نسبی در HTML
+          sed -i 's|src="//|src="https://|g' ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+          sed -i 's|href="//|href="https://|g' ${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html
+          
+          echo "✅ مسیرهای فایل اصلاح شد"
+      
+      - name: Create README
+        run: |
+          cat > ${{ github.event.inputs.target_folder }}/README.md << EOF
+          # 📱 صفحه آفلاین: ${{ github.event.inputs.filename }}
+          
+          **آدرس اصلی:** ${{ github.event.inputs.url }}
+          **تاریخ دانلود:** $(date '+%Y-%m-%d %H:%M:%S')
+          
+          ## 📂 فایل‌ها:
+          - \`${{ github.event.inputs.filename }}.html\` - صفحه کامل
+          - \`${{ github.event.inputs.filename }}.css\` - استایل‌ها
+          $([ "${{ github.event.inputs.screenshot }}" = "true" ] && echo '- \`${{ github.event.inputs.filename }}.png\` - اسکرین شات')
+          
+          ## 📱 نحوه استفاده روی گوشی:
+          1. فایل HTML را دانلود کنید
+          2. با مرورگر گوشی باز کنید
+          3. برای دسترسی آفلاین Bookmark کنید
+          
+          ---
+          ⚡ ساخته شده با Puppeteer + GitHub Actions
+          EOF
+      
+      - name: Commit and push to repository
         run: |
           git config --global user.name 'GitHub Actions Bot'
           git config --global user.email 'actions@github.com'
+          
           git add ${{ github.event.inputs.target_folder }}/
-          git commit -m "📥 Download page: ${{ github.event.inputs.filename }}"
+          git commit -m "📥 Download page with browser: ${{ github.event.inputs.filename }} from ${{ github.event.inputs.url }}"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Summary
+        run: |
+          echo "✅ **دانلود کامل شد!**"
+          echo ""
+          echo "📁 **مسیر فایل:**"
+          echo "\`${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html\`"
+          echo ""
+          echo "🔗 **لینک دانلود مستقیم:**"
+          echo "https://github.com/${{ github.repository }}/raw/main/${{ github.event.inputs.target_folder }}/${{ github.event.inputs.filename }}.html"
+          echo ""
+          echo "📱 **برای استفاده روی گوشی:**"
+          echo "1. لینک بالا را در مرورگر گوشی باز کنید"
+          echo "2. فایل را ذخیره کنید"
+          echo "3. با مرورگر باز کنید"
