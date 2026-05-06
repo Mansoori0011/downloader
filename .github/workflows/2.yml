@@ -25,7 +25,7 @@ jobs:
           npm init -y
           npm install puppeteer
 
-      - name: ساخت اسکریپت استخراج لینک‌ها (اصلاح شده بدون waitForTimeout)
+      - name: ساخت اسکریپت استخراج لینک‌ها
         run: |
           cat > extract.js << 'EOF'
           const puppeteer = require('puppeteer');
@@ -72,7 +72,6 @@ jobs:
               timeout: 120000 
             });
             
-            // استفاده از sleep به جای waitForTimeout
             await sleep(5000);
             
             console.log('Scrolling page...');
@@ -138,9 +137,9 @@ jobs:
             
             fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
             console.log('\n========================================');
-            console.log('نتایج:');
+            console.log('نتایج استخراج:');
             console.log('========================================');
-            console.log('لینک‌های یافت شده از شبکه:', videoUrls.size);
+            console.log('لینک‌های مستقیم (شبکه):', videoUrls.size);
             console.log('لینک‌های صفحات فیلم:', pageVideoLinks.length);
             console.log('========================================');
             
@@ -169,7 +168,7 @@ jobs:
           DIRECT_COUNT=$(cat "file/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
           
           echo "═══════════════════════════════════════════════════════════"
-          echo "📊 نتایج اولیه:"
+          echo "نتایج اولیه:"
           echo "═══════════════════════════════════════════════════════════"
           echo "لینک‌های صفحات فیلم: $VIDEO_COUNT"
           echo "لینک‌های مستقیم: $DIRECT_COUNT"
@@ -183,16 +182,15 @@ jobs:
           echo "" >> "file/video_links.txt"
           
           if [ "$DIRECT_COUNT" -gt 0 ]; then
-            echo "🎬 لینک‌های مستقیم پیدا شده:" >> "file/video_links.txt"
-            echo "════════════════════════════════════" >> "file/video_links.txt"
+            echo "لینک‌های مستقیم پیدا شده:" >> "file/video_links.txt"
+            echo "----------------------------------------" >> "file/video_links.txt"
             cat "file/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "file/video_links.txt"
-            echo "" >> "file/video_links.txt"
             echo "" >> "file/video_links.txt"
           fi
           
-          echo "📄 لینک‌های صفحات فیلم:" >> "file/video_links.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "file/video_links.txt"
-          cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "file/video_links.txt"
+          echo "لینک‌های صفحات فیلم:" >> "file/video_links.txt"
+          echo "----------------------------------------" >> "file/video_links.txt"
+          cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' 2>/dev/null >> "file/video_links.txt"
           
           cat "file/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "file/video_pages.txt"
           
@@ -204,6 +202,7 @@ jobs:
             while IFS= read -r url; do
               COUNTER=$((COUNTER + 1))
               echo "دریافت اطلاعات فیلم $COUNTER از $VIDEO_COUNT..."
+              echo "آدرس: $url"
               
               TITLE=$(yt-dlp --get-title "$url" 2>/dev/null || echo "فیلم $COUNTER")
               DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null || echo "نامشخص")
@@ -215,15 +214,15 @@ jobs:
               fi
               
               cat >> "file/videos_info.json" << EOF
-              {
-                "index": $COUNTER,
-                "title": "$TITLE",
-                "url": "$url",
-                "duration": "$DURATION",
-                "thumbnail": "$THUMBNAIL",
-                "qualities": "$FORMATS"
-              },
-              EOF
+    {
+      "index": $COUNTER,
+      "title": "$TITLE",
+      "url": "$url",
+      "duration": "$DURATION",
+      "thumbnail": "$THUMBNAIL",
+      "qualities": "$FORMATS"
+    },
+    EOF
             done < "file/video_pages.txt"
             
             sed -i '$ s/,$//' "file/videos_info.json"
@@ -231,6 +230,7 @@ jobs:
           else
             echo "[]" > "file/videos_info.json"
           fi
+          echo "✅ استخراج اطلاعات فیلم‌ها تکمیل شد"
 
       - name: گرفتن اسکرین‌شات
         run: |
@@ -244,91 +244,115 @@ jobs:
               const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
               const page = await browser.newPage();
               await page.setViewport({ width: 1280, height: 720 });
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+              await page.setUserAgent('Mozilla/5.0');
               await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
               await page.screenshot({ path: output, fullPage: true });
               await browser.close();
+              console.log('Screenshot saved to:', output);
           })();
           JSEOF
           
           node screenshot.js "$PAGE_URL" "file/screenshots/fullpage.png"
-          echo "✅ اسکرین‌شات گرفته شد"
+          echo "اسکرین‌شات گرفته شد"
 
-      - name: ایجاد فایل YAML پویا
+      - name: ایجاد فایل README
+        run: |
+          VIDEO_COUNT=$(cat "file/videos_info.json" | jq '. | length' 2>/dev/null || echo "0")
+          
+          cat > "file/README.md" << EOL
+          # نتایج استخراج فیلم
+  
+          - **آدرس صفحه**: ${{ github.event.inputs.page_url }}
+          - **تاریخ**: $(date)
+          - **تعداد فیلم‌ها**: $VIDEO_COUNT
+  
+          ## اسکرین‌شات
+  
+          ![اسکرین‌شات](./screenshots/fullpage.png)
+  
+          ## فایل‌ها
+  
+          - [video_links.txt](./video_links.txt) - لیست کامل لینک‌ها
+          - [video_pages.txt](./video_pages.txt) - لینک‌های صفحات فیلم
+          - [videos_info.json](./videos_info.json) - اطلاعات دقیق فیلم‌ها
+  
+          ---
+          تولید شده توسط GitHub Actions
+          EOL
+
+      - name: ایجاد فایل YAML پویا برای دانلود
         run: |
           TOTAL_VIDEOS=$(cat "file/videos_info.json" | jq '. | length' 2>/dev/null || echo "0")
           
           if [ "$TOTAL_VIDEOS" -eq 0 ]; then
-            echo "⚠️ هیچ فیلمی برای دانلود وجود ندارد"
+            echo "هیچ فیلمی برای دانلود وجود ندارد"
             exit 0
           fi
           
-          cat > .github/workflows/download-selected-video.yml << 'WFEOF'
-          name: 📥 دانلود فیلم انتخابی
+          mkdir -p .github/workflows
+          
+          cat > .github/workflows/download-video.yml << 'WFEOF'
+          name: دانلود فیلم انتخابی
           
           on:
             workflow_dispatch:
               inputs:
-                video_index:
+                video_number:
                   description: 'شماره فیلم مورد نظر'
                   required: true
-                  type: choice
-                  options:
+                  type: string
+          
+          jobs:
+            download:
+              runs-on: ubuntu-latest
+              permissions:
+                contents: write
+              steps:
+                - uses: actions/checkout@v4
+                - name: نصب yt-dlp
+                  run: pip3 install yt-dlp
+                - name: دانلود فیلم
+                  run: |
+                    VIDEO_INFO=$(cat file/videos_info.json)
+                    V_NUM="${{ github.event.inputs.video_number }}"
+                    VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].url")
+                    VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((V_NUM-1))].title")
+                    echo "در حال دانلود: $VIDEO_TITLE"
+                    yt-dlp -f best -o "video_${V_NUM}.mp4" "$VIDEO_URL"
+                - name: آپلود فایل
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: downloaded-video
+                    path: video_*.mp4
           WFEOF
           
-          for i in $(seq 1 $TOTAL_VIDEOS); do
-            TITLE=$(cat "file/videos_info.json" | jq -r ".[$((i-1))].title" | cut -c1-50)
-            echo "                    - '$i - $TITLE'" >> .github/workflows/download-selected-video.yml
-          done
-          
-          cat >> .github/workflows/download-selected-video.yml << 'WFEOF'
-            
-            jobs:
-              download:
-                runs-on: ubuntu-latest
-                permissions:
-                  contents: write
-                steps:
-                  - uses: actions/checkout@v4
-                  - name: نصب yt-dlp
-                    run: pip3 install yt-dlp
-                  - name: دانلود فیلم
-                    run: |
-                      VIDEO_INFO=$(cat "file/videos_info.json")
-                      INDEX="${{ github.event.inputs.video_index }}"
-                      VIDEO_NUMBER=$(echo "$INDEX" | cut -d' ' -f1)
-                      VIDEO_URL=$(echo "$VIDEO_INFO" | jq -r ".[$((VIDEO_NUMBER-1))].url")
-                      VIDEO_TITLE=$(echo "$VIDEO_INFO" | jq -r ".[$((VIDEO_NUMBER-1))].title")
-                      echo "در حال دانلود: $VIDEO_TITLE"
-                      yt-dlp -f best -o "video_${VIDEO_NUMBER}.mp4" "$VIDEO_URL"
-                  - name: آپلود فایل
-                    uses: actions/upload-artifact@v4
-                    with:
-                      name: downloaded-video
-                      path: video_*.mp4
-          WFEOF
-          
-          echo "✅ فایل پویا ایجاد شد"
+          echo "فایل پویا ایجاد شد: .github/workflows/download-video.yml"
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add file/
-          git add .github/workflows/download-selected-video.yml 2>/dev/null || true
+          git add .github/workflows/download-video.yml 2>/dev/null || true
           git commit -m "استخراج فیلم‌ها از ${{ github.event.inputs.page_url }}" || echo "تغییری وجود ندارد"
           git push || echo "خطا در ارسال"
 
-      - name: نمایش نتایج
+      - name: نمایش نتایج نهایی
         run: |
           VIDEO_COUNT=$(cat "file/videos_info.json" 2>/dev/null | jq '. | length' || echo "0")
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "✅ استخراج با موفقیت انجام شد!"
+          echo "استخراج با موفقیت انجام شد"
           echo "═══════════════════════════════════════════════════════════"
           echo ""
-          echo "📁 پوشه نتایج: file/"
-          echo "🎬 تعداد فیلم‌ها: $VIDEO_COUNT"
-          echo "📸 اسکرین‌شات: file/screenshots/fullpage.png"
+          echo "پوشه نتایج: file/"
+          echo "تعداد فیلم‌ها: $VIDEO_COUNT"
+          echo "اسکرین‌شات: file/screenshots/fullpage.png"
+          echo ""
+          echo "برای دانلود فیلم‌ها:"
+          echo "  1. به تب Actions بروید"
+          echo "  2. روی 'دانلود فیلم انتخابی' کلیک کنید"
+          echo "  3. شماره فیلم را وارد کنید"
+          echo "  4. Run workflow را بزنید"
           echo ""
           echo "═══════════════════════════════════════════════════════════"
