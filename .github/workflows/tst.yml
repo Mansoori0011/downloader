@@ -1,0 +1,217 @@
+name: استخراج همه لینک‌های فیلم از صفحه
+
+on:
+  workflow_dispatch:
+    inputs:
+      page_url:
+        description: 'آدرس صفحه (مثل صفحه اصلی یا صفحه دسته‌بندی)'
+        required: true
+        type: string
+        default: 'https://www.example.com'
+
+jobs:
+  extract-all:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: نصب ابزارهای مورد نیاز
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip
+          pip3 install yt-dlp
+          npm init -y
+          npm install puppeteer
+
+      - name: ساخت اسکریپت استخراج لینک‌ها
+        run: |
+          cat > extract.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          
+          function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+          }
+          
+          (async () => {
+            const url = process.argv[2];
+            const outputFile = process.argv[3];
+            
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            
+            const page = await browser.newPage();
+            
+            const videoUrls = new Set();
+            const pageVideoLinks = [];
+            
+            page.on('request', request => {
+              const requestUrl = request.url();
+              if (requestUrl.match(/\.(mp4|m3u8|ts|flv)(\?|$)/i) ||
+                  requestUrl.match(/\/video\//i) ||
+                  requestUrl.match(/\/get_file\//i) ||
+                  requestUrl.match(/\/hls\//i) ||
+                  requestUrl.match(/\/view_video\.php/i)) {
+                videoUrls.add(requestUrl);
+                console.log('Found URL:', requestUrl.substring(0, 100));
+              }
+            });
+            
+            console.log('Loading page:', url);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            
+            console.log('Scrolling page...');
+            for (let i = 0; i < 5; i++) {
+              await page.evaluate(() => {
+                window.scrollBy(0, window.innerHeight);
+              });
+              await sleep(2000);
+            }
+            
+            const links = await page.$$eval('a', (elements) => {
+              const results = [];
+              elements.forEach(a => {
+                const href = a.href;
+                if (href && (href.includes('/view_video.php') || 
+                    href.includes('/video/') || 
+                    href.includes('/watch') ||
+                    href.includes('/v/'))) {
+                  results.push({
+                    url: href,
+                    title: a.innerText?.trim() || a.title || 'بدون عنوان'
+                  });
+                }
+              });
+              return results;
+            });
+            
+            links.forEach(link => pageVideoLinks.push(link));
+            
+            await browser.close();
+            
+            const result = {
+              sourceUrl: url,
+              timestamp: new Date().toISOString(),
+              networkVideoUrls: Array.from(videoUrls),
+              pageVideoLinks: pageVideoLinks
+            };
+            
+            fs.writeFileSync(outputFile, JSON.stringify(result, null, 2));
+            console.log('\n========================================');
+            console.log('نتایج:');
+            console.log('========================================');
+            console.log('لینک‌های یافته شده از شبکه:', videoUrls.size);
+            console.log('لینک‌های صفحات فیلم:', pageVideoLinks.length);
+            console.log('========================================');
+            
+          })().catch(err => {
+            console.error('Error:', err.message);
+            process.exit(1);
+          });
+          EOF
+
+      - name: اجرای اسکریپت و استخراج لینک‌ها
+        run: |
+          PAGE_URL="${{ github.event.inputs.page_url }}"
+          
+          # حذف پوشه قبلی و ایجاد مجدد
+          rm -rf output
+          mkdir -p output/screenshots
+          
+          echo "در حال استخراج لینک‌ها از: $PAGE_URL"
+          node extract.js "$PAGE_URL" "output/extracted_links.json"
+          
+          echo "═══════════════════════════════════════════════════════════" > "output/video_links.txt"
+          echo "لیست لینک‌های فیلم‌ها" >> "output/video_links.txt"
+          echo "آدرس صفحه: $PAGE_URL" >> "output/video_links.txt"
+          echo "تاریخ: $(date)" >> "output/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "output/video_links.txt"
+          echo "" >> "output/video_links.txt"
+          
+          echo "🎬 لینک‌های مستقیم پیدا شده:" >> "output/video_links.txt"
+          echo "════════════════════════════════════" >> "output/video_links.txt"
+          cat "output/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "output/video_links.txt"
+          
+          echo "" >> "output/video_links.txt"
+          echo "" >> "output/video_links.txt"
+          
+          echo "📄 لینک‌های صفحات فیلم:" >> "output/video_links.txt"
+          echo "═══════════════════════════════════════════════════════════" >> "output/video_links.txt"
+          cat "output/extracted_links.json" | jq -r '.pageVideoLinks[] | "عنوان: \(.title)\nلینک: \(.url)\n---"' 2>/dev/null >> "output/video_links.txt"
+          
+          cat "output/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "output/video_pages.txt"
+          
+          VIDEO_COUNT=$(cat "output/video_pages.txt" 2>/dev/null | wc -l)
+          DIRECT_COUNT=$(cat "output/extracted_links.json" | jq -r '.networkVideoUrls | length' 2>/dev/null || echo "0")
+          
+          cat > "output/README.md" << EOL
+          # نتایج استخراج لینک فیلم
+
+          - **آدرس صفحه**: $PAGE_URL
+          - **تاریخ**: $(date)
+          - **تعداد لینک‌های مستقیم**: $DIRECT_COUNT
+          - **تعداد لینک‌های صفحات فیلم**: $VIDEO_COUNT
+
+          ## فایل‌های موجود
+
+          | فایل | توضیح |
+          |------|-------|
+          | [video_links.txt](./video_links.txt) | لیست کامل لینک‌ها |
+          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم |
+          | [extracted_links.json](./extracted_links.json) | اطلاعات کامل JSON |
+
+          ## 📸 اسکرین‌شات
+
+          ![اسکرین‌شات](./screenshots/fullpage.png)
+
+          ---
+          تولید شده توسط GitHub Actions
+          EOL
+          
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ نتایج استخراج:"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "لینک‌های مستقیم: $DIRECT_COUNT"
+          echo "لینک‌های صفحات فیلم: $VIDEO_COUNT"
+          echo ""
+
+      - name: گرفتن اسکرین‌شات
+        run: |
+          PAGE_URL="${{ github.event.inputs.page_url }}"
+          
+          cat > screenshot.js << 'JSEOF'
+          const puppeteer = require('puppeteer');
+          const url = process.argv[2];
+          const output = process.argv[3];
+          (async () => {
+              const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+              const page = await browser.newPage();
+              await page.setViewport({ width: 1280, height: 720 });
+              await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+              await page.screenshot({ path: output, fullPage: true });
+              await browser.close();
+              console.log('Screenshot saved:', output);
+          })();
+          JSEOF
+          
+          node screenshot.js "$PAGE_URL" "output/screenshots/fullpage.png"
+          echo "✅ اسکرین‌شات گرفته شد"
+
+      - name: ذخیره در مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add output/
+          git commit -m "استخراج لینک فیلم‌ها از ${{ github.event.inputs.page_url }}" || echo "تغییری وجود ندارد"
+          git push || echo "خطا در ارسال"
+
+      - name: آپلود به عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-links
+          path: output/
