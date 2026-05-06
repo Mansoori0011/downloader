@@ -94,32 +94,49 @@ jobs:
           cat file/extracted_links.json | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > file/video_pages.txt
 
       - name: دریافت اطلاعات فیلم (5 ترد همزمان)
-        run: |
-          cd file
-          TOTAL=$(cat video_pages.txt | wc -l)
-          echo "در حال دریافت اطلاعات $TOTAL فیلم با 5 ترد همزمان..."
-          
-          # حذف فایل قبلی
-          rm -f videos_info.json videos_info_temp.json
-          
-          # تابع پردازش
-          process_video() {
-            url="$1"
-            index="$2"
-            TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
-            DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
-            TITLE=${TITLE:-"فیلم $index"}
-            DURATION=${DURATION:-"نامشخص"}
-            echo "{\"index\":$index,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}"
-          }
-          export -f process_video
-          
-          # اجرای موازی با 5 ترد
-          cat -n video_pages.txt | head -100 | xargs -P 5 -I {} bash -c 'process_video "$(echo {})"' | jq -s '.' > videos_info.json
-          
-          COUNT=$(cat videos_info.json | jq '. | length')
-          echo "✅ اطلاعات $COUNT فیلم دریافت شد"
-          cd ..
+  run: |
+    cd file
+    TOTAL=$(cat video_pages.txt | wc -l)
+    echo "در حال دریافت اطلاعات $TOTAL فیلم با 5 ترد همزمان..."
+    
+    # حذف فایل قبلی
+    rm -f videos_info.json videos_info_temp.json
+    
+    # ساخت دایرکتوری موقت برای نتایج موازی
+    mkdir -p /tmp/parallel_results
+    rm -f /tmp/parallel_results/*.json
+    
+    # تابع پردازش (نتایج را در فایل جداگانه ذخیره می‌کند)
+    process_video() {
+      url="$1"
+      index="$2"
+      TITLE=$(yt-dlp --get-title "$url" 2>/dev/null | head -c 100)
+      DURATION=$(yt-dlp --get-duration "$url" 2>/dev/null)
+      TITLE=${TITLE:-"فیلم $index"}
+      DURATION=${DURATION:-"نامشخص"}
+      echo "{\"index\":$index,\"title\":\"$TITLE\",\"url\":\"$url\",\"duration\":\"$DURATION\"}" > "/tmp/parallel_results/result_$index.json"
+    }
+    export -f process_video
+    
+    # اجرای موازی با 5 ترد
+    cat -n video_pages.txt | head -100 | xargs -P 5 -I {} bash -c 'process_video "$(echo {})"'
+    
+    # ترکیب همه نتایج
+    echo "[" > videos_info.json
+    for f in $(ls -1 /tmp/parallel_results/result_*.json 2>/dev/null | sort -t_ -k2 -n); do
+      cat "$f" >> videos_info.json
+      echo "," >> videos_info.json
+    done
+    # حذف کامای آخر
+    sed -i '$ s/,$//' videos_info.json
+    echo "]" >> videos_info.json
+    
+    # پاکسازی
+    rm -rf /tmp/parallel_results
+    
+    COUNT=$(cat videos_info.json | jq '. | length' 2>/dev/null || echo "0")
+    echo "✅ اطلاعات $COUNT فیلم دریافت شد"
+    cd ..
 
       - name: گرفتن اسکرین‌شات
         run: |
