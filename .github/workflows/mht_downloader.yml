@@ -1,29 +1,45 @@
-name: ذخیره آفلاین وبسایت
+name: دانلود دقیق سایت
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس وبسایت'
+        description: 'آدرس سایت'
         required: true
+        type: string
 
 jobs:
-  save-site:
+  download:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: دانلود و بسته‌بندی سایت
+        with:
+          ref: master
+
+      - name: نصب Node.js و SingleFile
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: دانلود کامل صفحه
         run: |
           URL="${{ github.event.inputs.url }}"
-          mkdir -p offline-site
-          wget --page-requisites --convert-links --adjust-extension --no-parent -P offline-site "$URL"
-          cd offline-site && zip -r ../site-backup.zip . && cd ..
+          mkdir -p web-archive
+          
+          # نصب SingleFile
+          npm install -g single-file-cli
+          
+          # دانلود با User-Agent واقعی
+          npx single-file "$URL" --browser-chromium-args='--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"' --output web-archive/page.html
+          
+          echo "✅ فایل در web-archive/page.html ذخیره شد"
+
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add offline-site site-backup.zip
-          git commit -m "ذخیره آفلاین سایت: $URL" || echo "تغییری وجود ندارد"
-          git push
+          git config.user.email "actions@github.com"
+          git add web-archive/
+          git commit -m "دانلود صفحه" || echo "تغییری وجود ندارد"
+          git push origin master
