@@ -1,4 +1,4 @@
-name: 🌐 استخراج لینک فیلم‌ها + اسکرین‌شات (بدون yt-dlp)
+name: 🌐 دانلود کامل صفحه با wget
 
 on:
   workflow_dispatch:
@@ -7,260 +7,61 @@ on:
         description: 'آدرس سایت مورد نظر'
         required: true
         type: string
-      full_page_screenshot:
-        description: 'اسکرین‌شات کامل صفحه'
-        required: false
-        type: boolean
-        default: true
 
 jobs:
-  extract-videos:
+  download:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: master
 
-      - name: نصب ابزارهای مورد نیاز
+      - name: دانلود صفحه با wget
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl jq
-          npm init -y
-          npm install puppeteer
-
-      - name: ساخت اسکریپت استخراج لینک فیلم و اسکرین‌شات
-        run: |
-          cat > extract.js << 'EOF'
-          const puppeteer = require('puppeteer');
-          const fs = require('fs');
-          const path = require('path');
-          
-          function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-          }
-          
-          (async () => {
-            const url = process.argv[2];
-            const outputDir = process.argv[3];
-            const fullPageScreenshot = process.argv[4] === 'true';
-            
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-            });
-            
-            const page = await browser.newPage();
-            await page.setViewport({ width: 1280, height: 720 });
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-            
-            const videoUrls = new Set();
-            const pageVideoLinks = [];
-            
-            // ========== مانیتور کردن درخواست‌های شبکه ==========
-            page.on('request', request => {
-              const requestUrl = request.url();
-              if (requestUrl.match(/\.(mp4|m3u8|ts|flv|webm|mkv|avi|mov)(\?|$)/i) ||
-                  requestUrl.match(/\/video\//i) ||
-                  requestUrl.match(/\/get_file\//i) ||
-                  requestUrl.match(/\/hls\//i)) {
-                videoUrls.add(requestUrl);
-                console.log('🎬 لینک مستقیم یافت شد:', requestUrl.substring(0, 100));
-              }
-            });
-            
-            console.log('🌐 در حال بارگذاری:', url);
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            
-            // ========== اسکرول خودکار ==========
-            console.log('📜 در حال اسکرول صفحه...');
-            for (let i = 0; i < 5; i++) {
-              await page.evaluate(() => { window.scrollBy(0, window.innerHeight); });
-              await sleep(2000);
-            }
-            
-            // ========== گرفتن اسکرین‌شات ==========
-            const screenshotDir = path.join(outputDir, 'screenshots');
-            fs.mkdirSync(screenshotDir, { recursive: true });
-            
-            const screenshotPath = path.join(screenshotDir, fullPageScreenshot ? 'fullpage.png' : 'thumbnail.png');
-            if (fullPageScreenshot) {
-              await page.screenshot({ path: screenshotPath, fullPage: true });
-              console.log('📸 اسکرین‌شات کامل گرفته شد');
-            } else {
-              await page.screenshot({ path: screenshotPath });
-              console.log('📸 اسکرین‌شات بندانگشتی گرفته شد');
-            }
-            
-            // ========== استخراج لینک از المنت‌های صفحه ==========
-            console.log('🔍 در حال استخراج لینک‌ها...');
-            const links = await page.$$eval('a, video, source, iframe', (elements) => {
-              const results = [];
-              elements.forEach(el => {
-                const tagName = el.tagName.toLowerCase();
-                let href = '';
-                let title = '';
-                
-                if (tagName === 'a') {
-                  href = el.href;
-                  title = el.innerText?.trim() || el.title || el.getAttribute('aria-label') || '';
-                } else if (tagName === 'video') {
-                  href = el.src || el.getAttribute('src');
-                  title = el.getAttribute('title') || 'Video';
-                } else if (tagName === 'source') {
-                  href = el.src;
-                  title = 'Source';
-                } else if (tagName === 'iframe') {
-                  href = el.src;
-                  title = el.getAttribute('title') || 'Iframe';
-                }
-                
-                if (href && href !== '' && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                  results.push({
-                    url: href,
-                    title: title.substring(0, 150)
-                  });
-                }
-              });
-              return results;
-            });
-            
-            // ========== فیلتر لینک‌های ویدیویی ==========
-            const videoPatterns = [
-              /view_video\.php/i, /\/video\//i, /\/watch/i, /\/v\//i,
-              /\/embed\//i, /\.mp4/i, /\.m3u8/i, /\.ts/i, /player/i,
-              /youtube\.com\/watch/i, /youtu\.be\//i, /vimeo\.com\//i,
-              /aparat\.com\/v\//i, /namasha\.com\/v\//i, /dailymotion\.com\/video/i,
-              /\.(mp4|m3u8|flv|webm|mkv|avi|mov)(\?|$)/i
-            ];
-            
-            const filteredLinks = links.filter(link => {
-              return videoPatterns.some(pattern => pattern.test(link.url));
-            });
-            
-            filteredLinks.forEach(link => pageVideoLinks.push(link));
-            
-            await browser.close();
-            
-            // ========== ذخیره نتایج ==========
-            const result = {
-              sourceUrl: url,
-              timestamp: new Date().toISOString(),
-              totalLinks: links.length,
-              networkVideoUrls: Array.from(videoUrls),
-              pageVideoLinks: pageVideoLinks
-            };
-            
-            fs.writeFileSync(path.join(outputDir, 'extracted_links.json'), JSON.stringify(result, null, 2));
-            console.log(`\n✅ استخراج کامل شد!`);
-            console.log(`📊 لینک‌های مستقیم: ${videoUrls.size}`);
-            console.log(`📄 صفحات فیلم: ${pageVideoLinks.length}`);
-            
-          })().catch(err => {
-            console.error('❌ خطا:', err.message);
-            process.exit(1);
-          });
-          EOF
-
-      - name: اجرای اسکریپت و استخراج لینک
-        run: |
-          PAGE_URL="${{ github.event.inputs.url }}"
-          FULL_SCREEN="${{ github.event.inputs.full_page_screenshot }}"
+          URL="${{ github.event.inputs.url }}"
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          DOMAIN=$(echo "$PAGE_URL" | awk -F/ '{print $3}' | sed 's/^www\.//')
-          FOLDER="video_links/${DOMAIN}_${TIMESTAMP}"
-          mkdir -p "$FOLDER"
+          OUTPUT_DIR="page_${TIMESTAMP}"
+          
+          echo "در حال دانلود صفحه: $URL"
+          
+          # دانلود کامل صفحه با تمام منابع
+          wget \
+            --recursive \
+            --page-requisites \
+            --adjust-extension \
+            --span-hosts \
+            --convert-links \
+            --restrict-file-names=windows \
+            --directory-prefix="$OUTPUT_DIR" \
+            --no-parent \
+            "$URL"
+          
+          # ایجاد فایل ZIP
+          cd "$OUTPUT_DIR"
+          zip -r "../${OUTPUT_DIR}.zip" .
+          cd ..
           
           echo "═══════════════════════════════════════════════════════════"
-          echo "🌐 در حال استخراج لینک فیلم‌ها از: $PAGE_URL"
+          echo "✅ دانلود کامل شد!"
+          echo "📁 پوشه: $OUTPUT_DIR"
+          echo "📦 فایل ZIP: ${OUTPUT_DIR}.zip"
           echo "═══════════════════════════════════════════════════════════"
-          
-          node extract.js "$PAGE_URL" "$FOLDER" "$FULL_SCREEN"
-          
-          # ========== ایجاد فایل متنی لینک‌ها ==========
-          echo "═══════════════════════════════════════════════════════════" > "$FOLDER/video_links.txt"
-          echo "📋 لیست لینک‌های فیلم" >> "$FOLDER/video_links.txt"
-          echo "🌐 آدرس: $PAGE_URL" >> "$FOLDER/video_links.txt"
-          echo "📅 تاریخ: $(date)" >> "$FOLDER/video_links.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "$FOLDER/video_links.txt"
-          echo "" >> "$FOLDER/video_links.txt"
-          
-          # لینک‌های مستقیم (از شبکه)
-          echo "🎬 لینک‌های مستقیم (از درخواست‌های شبکه):" >> "$FOLDER/video_links.txt"
-          echo "───────────────────────────────────────────────────────────" >> "$FOLDER/video_links.txt"
-          cat "$FOLDER/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null >> "$FOLDER/video_links.txt"
-          
-          echo "" >> "$FOLDER/video_links.txt"
-          echo "📄 لینک‌های صفحات فیلم:" >> "$FOLDER/video_links.txt"
-          echo "───────────────────────────────────────────────────────────" >> "$FOLDER/video_links.txt"
-          cat "$FOLDER/extracted_links.json" | jq -r '.pageVideoLinks[] | "🎬 عنوان: " + .title + "\n🔗 لینک: " + .url + "\n---"' 2>/dev/null >> "$FOLDER/video_links.txt"
-          
-          # استخراج فقط لینک‌ها برای دانلود بعدی
-          cat "$FOLDER/extracted_links.json" | jq -r '.pageVideoLinks[] | .url' 2>/dev/null > "$FOLDER/video_pages.txt"
-          cat "$FOLDER/extracted_links.json" | jq -r '.networkVideoUrls[]?' 2>/dev/null > "$FOLDER/direct_urls.txt"
-          
-          VIDEO_COUNT=$(cat "$FOLDER/video_pages.txt" 2>/dev/null | wc -l)
-          DIRECT_COUNT=$(cat "$FOLDER/direct_urls.txt" 2>/dev/null | wc -l)
-          
-          # ========== ایجاد فایل README ==========
-          cat > "$FOLDER/README.md" << EOL
-          # 🎬 نتایج استخراج لینک فیلم
-
-          | مشخصات | مقدار |
-          |---------|-------|
-          | **🌐 آدرس صفحه** | [$PAGE_URL]($PAGE_URL) |
-          | **📅 تاریخ** | $(date) |
-          | **🎬 لینک‌های مستقیم** | $DIRECT_COUNT |
-          | **📄 لینک‌های صفحات فیلم** | $VIDEO_COUNT |
-
-          ## 📸 اسکرین‌شات
-
-          ![اسکرین‌شات](./screenshots/$( [ "$FULL_SCREEN" = "true" ] && echo "fullpage.png" || echo "thumbnail.png" ))
-
-          ## 📂 فایل‌های موجود
-
-          | فایل | توضیح |
-          |------|-------|
-          | [video_links.txt](./video_links.txt) | لیست کامل لینک‌ها |
-          | [video_pages.txt](./video_pages.txt) | لینک‌های صفحات فیلم |
-          | [direct_urls.txt](./direct_urls.txt) | لینک‌های مستقیم ویدیو |
-          | [extracted_links.json](./extracted_links.json) | اطلاعات کامل JSON |
-
-          ## 📥 نحوه دانلود
-
-          برای دانلود هر فیلم، لینک آن را از فایل \`video_pages.txt\` یا \`direct_urls.txt\` کپی کنید و در فایل \`download-video.yml\` قرار دهید.
-
-          ---
-          🔧 تولید شده توسط GitHub Actions
-          EOL
-          
-          echo "FOLDER=$FOLDER" >> $GITHUB_ENV
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ نتایج استخراج:"
-          echo "═══════════════════════════════════════════════════════════"
-          echo "📁 پوشه: $FOLDER"
-          echo "🎬 لینک‌های مستقیم: $DIRECT_COUNT"
-          echo "📄 لینک‌های صفحات فیلم: $VIDEO_COUNT"
-          echo "📸 اسکرین‌شات: $FOLDER/screenshots/"
-          echo ""
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add video_links/
-          if git diff --staged --quiet; then
-            echo "هیچ تغییر جدیدی برای commit وجود ندارد"
-            exit 0
-          fi
-          git commit -m "استخراج لینک فیلم‌ها از ${{ github.event.inputs.url }}"
-          git pull --rebase
-          git push
+          git config user.email "actions@github.com"
+          git add page_*/
+          git add *.zip
+          git commit -m "دانلود صفحه ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git push origin master
 
-      - name: آپلود به عنوان Artifact
+      - name: آپلود Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: video-links-${{ github.run_id }}
-          path: ${{ env.FOLDER }}/
+          name: downloaded-page
+          path: |
+            page_*/
+            *.zip
