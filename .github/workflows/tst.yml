@@ -1,138 +1,164 @@
-name: استخراج لینک فیلم‌ها (view_video.php)
+name: 🌐 استخراج لینک فیلم با Puppeteer
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'آدرس صفحه یا دسته‌بندی سایت'
+        description: 'URL to visit'
         required: true
         type: string
 
 jobs:
-  extract:
+  browse:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: نصب ابزارها
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl
+          sudo apt-get install -y curl zip
+
+      - name: Setup Node and Puppeteer
+        run: |
           npm init -y
           npm install puppeteer
 
-      - name: استخراج لینک‌ها و اسکرین‌شات
+      - name: Create screenshot and extract script
         run: |
-          URL="${{ github.event.inputs.url }}"
-          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          OUTPUT_DIR="extracted_${TIMESTAMP}"
-          mkdir -p "$OUTPUT_DIR/screenshots"
-          
-          cat > extract.js << 'EOF'
+          cat > extract.js << 'ENDOFSCRIPT'
           const puppeteer = require('puppeteer');
           const fs = require('fs');
           
           (async () => {
             const url = process.argv[2];
-            const outputJson = process.argv[3];
-            const screenshotPath = process.argv[4];
+            const screenshotPath = process.argv[3];
+            const outputJson = process.argv[4];
             
             const browser = await puppeteer.launch({
               headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
+              args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
             });
             const page = await browser.newPage();
+            await page.setViewport({ width: 1280, height: 720 });
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
             
-            console.log('در حال بارگذاری:', url);
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            
-            // اسکرول صفحه
-            for (let i = 0; i < 5; i++) {
-              await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-              await new Promise(r => setTimeout(r, 1000));
-            }
-            
-            // اسکرین‌شات
-            await page.screenshot({ path: screenshotPath, fullPage: true });
-            console.log('اسکرین‌شات گرفته شد');
-            
-            // استخراج لینک‌های view_video.php
-            const videoLinks = await page.evaluate(() => {
-              const links = [];
-              document.querySelectorAll('a').forEach(a => {
-                const href = a.href;
-                if (href && href.includes('/view_video.php?viewkey=')) {
-                  links.push({
-                    url: href,
-                    title: a.innerText?.trim() || a.title || 'بدون عنوان'
-                  });
-                }
+            try {
+              console.log('Loading page:', url);
+              await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+              
+              // اسکرول صفحه برای لود کامل
+              console.log('Scrolling page...');
+              for (let i = 0; i < 5; i++) {
+                await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+                await new Promise(r => setTimeout(r, 1000));
+              }
+              
+              // اسکرین‌شات
+              await page.screenshot({ path: screenshotPath, fullPage: true });
+              console.log('Screenshot saved successfully');
+              
+              // استخراج لینک‌های view_video.php?viewkey=
+              const videoLinks = await page.evaluate(() => {
+                const results = [];
+                const links = document.querySelectorAll('a');
+                links.forEach(a => {
+                  const href = a.href;
+                  if (href && href.includes('/view_video.php?viewkey=')) {
+                    results.push({
+                      url: href,
+                      title: a.innerText?.trim() || a.title || 'بدون عنوان'
+                    });
+                  }
+                });
+                return results;
               });
-              return links;
-            });
-            
-            fs.writeFileSync(outputJson, JSON.stringify(videoLinks, null, 2));
-            console.log(`✅ ${videoLinks.length} لینک فیلم استخراج شد`);
-            
-            await browser.close();
+              
+              console.log(`Found ${videoLinks.length} video links`);
+              
+              // ذخیره نتایج
+              fs.writeFileSync(outputJson, JSON.stringify(videoLinks, null, 2));
+              
+              // ایجاد فایل متنی ساده
+              let textOutput = '═══════════════════════════════════════════════════════════\n';
+              textOutput += 'لیست لینک‌های فیلم\n';
+              textOutput += '═══════════════════════════════════════════════════════════\n\n';
+              videoLinks.forEach((link, i) => {
+                textOutput += `[${i+1}] عنوان: ${link.title}\n`;
+                textOutput += `    لینک: ${link.url}\n\n`;
+              });
+              fs.writeFileSync(outputJson.replace('.json', '.txt'), textOutput);
+              
+            } catch (err) {
+              console.error('Error:', err.message);
+              process.exit(1);
+            } finally {
+              await browser.close();
+            }
           })();
+          ENDOFSCRIPT
+
+      - name: Run extractor
+        run: |
+          RAW_URL="${{ github.event.inputs.url }}"
+          
+          # Normalize URL
+          if [[ ! "$RAW_URL" =~ ^https?:// ]]; then
+            URL="https://$RAW_URL"
+          else
+            URL="$RAW_URL"
+          fi
+          
+          echo "Visiting $URL"
+          
+          # Create output folder
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          OUTPUT_DIR="extracted_${TIMESTAMP}"
+          mkdir -p "$OUTPUT_DIR"
+          
+          # Run extraction
+          node extract.js "$URL" "$OUTPUT_DIR/screenshot.png" "$OUTPUT_DIR/video_links.json"
+          
+          # Create index.md
+          VIDEO_COUNT=$(cat "$OUTPUT_DIR/video_links.json" | jq '. | length' 2>/dev/null || echo "0")
+          
+          cat > "$OUTPUT_DIR/index.md" << EOF
+          # Extracted Video Links
+  
+          **URL:** $URL
+          **Time:** $(date)
+          **Videos found:** $VIDEO_COUNT
+  
+          ## Screenshot
+          ![Screenshot](./screenshot.png)
+  
+          ## Video Links
+          - [video_links.txt](./video_links.txt)
+          - [video_links.json](./video_links.json)
           EOF
           
-          node extract.js "$URL" "$OUTPUT_DIR/video_links.json" "$OUTPUT_DIR/screenshots/fullpage.png"
-          
-          # ایجاد فایل متنی ساده
-          echo "═══════════════════════════════════════════════════════════" > "$OUTPUT_DIR/video_links.txt"
-          echo "لیست لینک‌های فیلم" >> "$OUTPUT_DIR/video_links.txt"
-          echo "منبع: $URL" >> "$OUTPUT_DIR/video_links.txt"
-          echo "تاریخ: $(date)" >> "$OUTPUT_DIR/video_links.txt"
-          echo "═══════════════════════════════════════════════════════════" >> "$OUTPUT_DIR/video_links.txt"
-          echo "" >> "$OUTPUT_DIR/video_links.txt"
-          
-          cat "$OUTPUT_DIR/video_links.json" | jq -r '.[] | "عنوان: " + .title + "\nلینک: " + .url + "\n---"' >> "$OUTPUT_DIR/video_links.txt"
-          
-          # ایجاد README
-          VIDEO_COUNT=$(cat "$OUTPUT_DIR/video_links.json" | jq '. | length')
-          cat > "$OUTPUT_DIR/README.md" << EOL
-          # نتایج استخراج لینک فیلم
-  
-          - **آدرس**: $URL
-          - **تاریخ**: $(date)
-          - **تعداد فیلم‌ها**: $VIDEO_COUNT
-  
-          ## اسکرین‌شات
-          ![اسکرین‌شات](./screenshots/fullpage.png)
-  
-          ## لینک‌های فیلم
-          [video_links.txt](./video_links.txt)
-          EOL
-          
           echo "OUTPUT_DIR=$OUTPUT_DIR" >> $GITHUB_ENV
+          echo "Done: $VIDEO_COUNT video links extracted"
 
-      - name: ذخیره در مخزن
+      - name: Commit and push
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add "${{ env.OUTPUT_DIR }}/"
-          git commit -m "استخراج لینک فیلم‌ها از ${{ github.event.inputs.url }}" || echo "تغییری وجود ندارد"
+          git config user.email "github-actions@github.com"
+          git add ${{ env.OUTPUT_DIR }}/
+          if git diff --staged --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Extracted video links from ${{ github.event.inputs.url }} [skip ci]"
+          git pull --rebase
           git push
 
-      - name: آپلود Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: extracted-links
+          name: extracted-links-${{ github.run_id }}
           path: ${{ env.OUTPUT_DIR }}/
-
-      - name: نمایش نتایج
-        run: |
-          VIDEO_COUNT=$(cat "${{ env.OUTPUT_DIR }}/video_links.json" | jq '. | length')
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ استخراج با موفقیت انجام شد!"
-          echo "═══════════════════════════════════════════════════════════"
-          echo "📁 پوشه: ${{ env.OUTPUT_DIR }}"
-          echo "🎬 تعداد لینک‌ها: $VIDEO_COUNT"
-          echo "📸 اسکرین‌شات: ${{ env.OUTPUT_DIR }}/screenshots/fullpage.png"
-          echo "═══════════════════════════════════════════════════════════"
