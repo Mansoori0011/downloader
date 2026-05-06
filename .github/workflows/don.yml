@@ -33,7 +33,7 @@ jobs:
         run: |
           pip install yt-dlp
 
-      - name: دانلود فیلم با کیفیت انتخاب شده
+      - name: دانلود فیلم و ساخت ZIP
         run: |
           URL="${{ github.event.inputs.video_url }}"
           QUALITY="${{ github.event.inputs.quality }}"
@@ -45,7 +45,7 @@ jobs:
           echo "🎚️ کیفیت: $QUALITY"
           echo "═══════════════════════════════════════════════════════════"
           
-          # انتخاب کیفیت
+          # دانلود فیلم
           case "$QUALITY" in
             "best")
               yt-dlp -f best -o "video_${TIMESTAMP}.mp4" "$URL"
@@ -64,14 +64,20 @@ jobs:
               ;;
           esac
           
-          echo "✅ دانلود کامل شد: video_${TIMESTAMP}.mp4"
-          echo "FILE_NAME=video_${TIMESTAMP}.mp4" >> $GITHUB_ENV
+          # ساخت فایل ZIP
+          zip "video_${TIMESTAMP}.zip" "video_${TIMESTAMP}.mp4"
+          echo "✅ فایل ZIP ساخته شد: video_${TIMESTAMP}.zip"
+          
+          # حذف فایل MP4 (فقط ZIP بماند)
+          rm "video_${TIMESTAMP}.mp4"
+          
+          echo "FILE_ZIP=video_${TIMESTAMP}.zip" >> $GITHUB_ENV
 
       - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add "${{ env.FILE_NAME }}"
+          git add "${{ env.FILE_ZIP }}"
           git commit -m "دانلود فیلم با کیفیت ${{ github.event.inputs.quality }}" || echo "تغییری وجود ندارد"
           git push origin master
 
@@ -79,4 +85,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-video
-          path: ${{ env.FILE_NAME }}
+          path: ${{ env.FILE_ZIP }}
