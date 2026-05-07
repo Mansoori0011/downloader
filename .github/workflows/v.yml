@@ -1,4 +1,4 @@
-name: Reality VPN
+name: Reality VPN Fixed
 
 on:
   workflow_dispatch:
@@ -17,30 +17,21 @@ jobs:
         unzip xray.zip
         chmod +x xray
 
-    - name: Generate Keys and Run
+    - name: Run Server
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
         PUBLIC_IP=$(curl -s ifconfig.me)
+        PORT=8080
         
-        # ساخت کلیدهای Reality با خود Xray
-        KEYPAIR=$(./xray x25519)
-        PRIVATE_KEY=$(echo "$KEYPAIR" | grep "Private" | awk '{print $3}')
-        PUBLIC_KEY=$(echo "$KEYPAIR" | grep "Public" | awk '{print $3}')
-        
-        echo "Private: $PRIVATE_KEY"
-        echo "Public: $PUBLIC_KEY"
-        
-        # اگه خالی بود، از کلیدهای ثابت آماده استفاده کن (پشتیبان)
-        if [ -z "$PRIVATE_KEY" ]; then
-          PRIVATE_KEY="KGzM1LmBHTBsu6lAQ8EnPVz0Mn9GZ4xjBxu6rX0SG0Q"
-          PUBLIC_KEY="7k0Q_zKxwKxGtKZQ1VFsWhn7yEPLMDnKq_BHEYLHqFk"
-        fi
+        # کلیدهای از پیش ساخته شده (تضمینی)
+        PRIVATE_KEY="KGzM1LmBHTBsu6lAQ8EnPVz0Mn9GZ4xjBxu6rX0SG0Q"
+        PUBLIC_KEY="7k0Q_zKxwKxGtKZQ1VFsWhn7yEPLMDnKq_BHEYLHqFk"
         
         cat > config.json << EOF
         {
           "log": {"loglevel": "info"},
           "inbounds": [{
-            "port": 443,
+            "port": $PORT,
             "listen": "0.0.0.0",
             "protocol": "vless",
             "settings": {
@@ -71,15 +62,14 @@ jobs:
         sleep 3
         
         echo "=============================================================================="
-        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality"
+        echo "vless://$UUID@$PUBLIC_IP:$PORT?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality"
         echo "=============================================================================="
         
-        # ذخیره برای استفاده راحت‌تر
-        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality" > config.txt
+        echo "vless://$UUID@$PUBLIC_IP:$PORT?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality" > config.txt
         
         sleep 21000
 
-    - name: Save config
+    - name: Save
       if: always()
       run: |
         git config user.name "github-actions"
