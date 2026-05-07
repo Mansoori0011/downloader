@@ -1,4 +1,4 @@
-name: Direct IP VPN
+name: HTTPS Masquerade VPN
 
 on:
   workflow_dispatch:
@@ -15,35 +15,53 @@ jobs:
         unzip xray.zip
         chmod +x xray
 
-    - name: Get Public IP and Run
+    - name: Setup and Run
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
-        PORT=$(shuf -i 10000-60000 -n 1)
         PUBLIC_IP=$(curl -s ifconfig.me)
         
+        # ساخت کلیدهای X25519 برای Reality (بدون نیاز به دامنه یا سرتیفیکیت)
+        KEYS=$($GITHUB_WORKSPACE/xray x25519)
+        PRIVATE_KEY=$(echo "$KEYS" | grep "Private" | awk '{print $3}')
+        PUBLIC_KEY=$(echo "$KEYS" | grep "Public" | awk '{print $3}')
+        
+        # تنظیمات پیشرفته: Reality Protocol + تقلید سایت مایکروسافت 
         cat > config.json << EOF
         {
+          "log": {"loglevel": "info"},
           "inbounds": [{
-            "port": $PORT,
-            "listen": "0.0.0.0",
+            "port": 443,
             "protocol": "vless",
             "settings": {
-              "clients": [{ "id": "$UUID" }],
+              "clients": [{
+                "id": "$UUID",
+                "flow": "xtls-rprx-vision"
+              }],
               "decryption": "none"
             },
             "streamSettings": {
-              "network": "tcp"
+              "network": "tcp",
+              "security": "reality",
+              "realitySettings": {
+                "show": false,
+                "dest": "www.microsoft.com:443",
+                "xver": 0,
+                "serverNames": ["www.microsoft.com"],
+                "privateKey": "$PRIVATE_KEY",
+                "publicKey": "$PUBLIC_KEY",
+                "shortIds": ["6ba85179e30d4fc2"]
+              }
             }
           }],
-          "outbounds": [{ "protocol": "freedom" }]
+          "outbounds": [{"protocol": "freedom"}]
         }
         EOF
         
         ./xray run -config config.json &
-        sleep 2
+        sleep 3
         
-        echo "=============================="
-        echo "vless://$UUID@$PUBLIC_IP:$PORT?encryption=none&security=none&type=tcp#GitHub-Direct"
-        echo "=============================="
+        echo "=============================================================================="
+        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#GitHub-Reality-HTTPS"
+        echo "=============================================================================="
         
         sleep 21000
