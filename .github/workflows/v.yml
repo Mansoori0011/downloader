@@ -1,7 +1,9 @@
-name: HTTPS Masquerade VPN
+name: Reality VPN
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'
 
 jobs:
   tunnel:
@@ -15,22 +17,31 @@ jobs:
         unzip xray.zip
         chmod +x xray
 
-    - name: Setup and Run
+    - name: Generate Keys and Run
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
         PUBLIC_IP=$(curl -s ifconfig.me)
         
-        # ساخت کلیدهای X25519 برای Reality (بدون نیاز به دامنه یا سرتیفیکیت)
-        KEYS=$($GITHUB_WORKSPACE/xray x25519)
-        PRIVATE_KEY=$(echo "$KEYS" | grep "Private" | awk '{print $3}')
-        PUBLIC_KEY=$(echo "$KEYS" | grep "Public" | awk '{print $3}')
+        # ساخت کلیدهای Reality با خود Xray
+        KEYPAIR=$(./xray x25519)
+        PRIVATE_KEY=$(echo "$KEYPAIR" | grep "Private" | awk '{print $3}')
+        PUBLIC_KEY=$(echo "$KEYPAIR" | grep "Public" | awk '{print $3}')
         
-        # تنظیمات پیشرفته: Reality Protocol + تقلید سایت مایکروسافت 
+        echo "Private: $PRIVATE_KEY"
+        echo "Public: $PUBLIC_KEY"
+        
+        # اگه خالی بود، از کلیدهای ثابت آماده استفاده کن (پشتیبان)
+        if [ -z "$PRIVATE_KEY" ]; then
+          PRIVATE_KEY="KGzM1LmBHTBsu6lAQ8EnPVz0Mn9GZ4xjBxu6rX0SG0Q"
+          PUBLIC_KEY="7k0Q_zKxwKxGtKZQ1VFsWhn7yEPLMDnKq_BHEYLHqFk"
+        fi
+        
         cat > config.json << EOF
         {
           "log": {"loglevel": "info"},
           "inbounds": [{
             "port": 443,
+            "listen": "0.0.0.0",
             "protocol": "vless",
             "settings": {
               "clients": [{
@@ -48,7 +59,6 @@ jobs:
                 "xver": 0,
                 "serverNames": ["www.microsoft.com"],
                 "privateKey": "$PRIVATE_KEY",
-                "publicKey": "$PUBLIC_KEY",
                 "shortIds": ["6ba85179e30d4fc2"]
               }
             }
@@ -61,7 +71,19 @@ jobs:
         sleep 3
         
         echo "=============================================================================="
-        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#GitHub-Reality-HTTPS"
+        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality"
         echo "=============================================================================="
         
+        # ذخیره برای استفاده راحت‌تر
+        echo "vless://$UUID@$PUBLIC_IP:443?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality" > config.txt
+        
         sleep 21000
+
+    - name: Save config
+      if: always()
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add config.txt 2>/dev/null || true
+        git commit -m "Update" 2>/dev/null || true
+        git push
