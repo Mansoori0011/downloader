@@ -1,9 +1,7 @@
-name: Reality VPN Fixed
+name: Multi-Port VPN
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */5 * * *'
 
 jobs:
   tunnel:
@@ -11,49 +9,64 @@ jobs:
     timeout-minutes: 350
 
     steps:
-    - name: Download Xray
+    - name: Download Tools
       run: |
         wget -O xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
         unzip xray.zip
         chmod +x xray
+        sudo apt-get update -qq && sudo apt-get install -y -qq socat
 
-    - name: Run Server
+    - name: Run Multi-Port Server
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
         PUBLIC_IP=$(curl -s ifconfig.me)
-        PORT=8080
         
-        # کلیدهای از پیش ساخته شده (تضمینی)
         PRIVATE_KEY="KGzM1LmBHTBsu6lAQ8EnPVz0Mn9GZ4xjBxu6rX0SG0Q"
         PUBLIC_KEY="7k0Q_zKxwKxGtKZQ1VFsWhn7yEPLMDnKq_BHEYLHqFk"
         
         cat > config.json << EOF
         {
           "log": {"loglevel": "info"},
-          "inbounds": [{
-            "port": $PORT,
-            "listen": "0.0.0.0",
-            "protocol": "vless",
-            "settings": {
-              "clients": [{
-                "id": "$UUID",
-                "flow": "xtls-rprx-vision"
-              }],
-              "decryption": "none"
+          "inbounds": [
+            {
+              "port": 8080,
+              "listen": "0.0.0.0",
+              "protocol": "vless",
+              "settings": {
+                "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                "decryption": "none"
+              },
+              "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                  "dest": "www.microsoft.com:443",
+                  "serverNames": ["www.microsoft.com"],
+                  "privateKey": "$PRIVATE_KEY",
+                  "shortIds": ["6ba85179e30d4fc2"]
+                }
+              }
             },
-            "streamSettings": {
-              "network": "tcp",
-              "security": "reality",
-              "realitySettings": {
-                "show": false,
-                "dest": "www.microsoft.com:443",
-                "xver": 0,
-                "serverNames": ["www.microsoft.com"],
-                "privateKey": "$PRIVATE_KEY",
-                "shortIds": ["6ba85179e30d4fc2"]
+            {
+              "port": 2121,
+              "listen": "0.0.0.0",
+              "protocol": "vless",
+              "settings": {
+                "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                "decryption": "none"
+              },
+              "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                  "dest": "www.google.com:443",
+                  "serverNames": ["www.google.com"],
+                  "privateKey": "$PRIVATE_KEY",
+                  "shortIds": ["6ba85179e30d4fc2"]
+                }
               }
             }
-          }],
+          ],
           "outbounds": [{"protocol": "freedom"}]
         }
         EOF
@@ -61,19 +74,11 @@ jobs:
         ./xray run -config config.json &
         sleep 3
         
-        echo "=============================================================================="
-        echo "vless://$UUID@$PUBLIC_IP:$PORT?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality"
-        echo "=============================================================================="
-        
-        echo "vless://$UUID@$PUBLIC_IP:$PORT?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality" > config.txt
+        echo "==================== پورت 8080 (مایکروسافت) ===================="
+        echo "vless://$UUID@$PUBLIC_IP:8080?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.microsoft.com&sid=6ba85179e30d4fc2#Reality-8080"
+        echo ""
+        echo "==================== پورت 2121 (گوگل) ===================="
+        echo "vless://$UUID@$PUBLIC_IP:2121?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&pbk=$PUBLIC_KEY&sni=www.google.com&sid=6ba85179e30d4fc2#Reality-2121"
+        echo "============================================================"
         
         sleep 21000
-
-    - name: Save
-      if: always()
-      run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
-        git add config.txt 2>/dev/null || true
-        git commit -m "Update" 2>/dev/null || true
-        git push
