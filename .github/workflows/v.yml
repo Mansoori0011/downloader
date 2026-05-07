@@ -1,0 +1,73 @@
+name: v
+
+on:
+  workflow_dispatch: # هر وقت خواستی اجرا کن
+  schedule:
+    - cron: '0 */5 * * *' # هر ۵ ساعت یکبار به صورت خودکار تمدید شود
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # حداکثر ۶ ساعت
+
+    steps:
+    - name: Download Xray and Bore from GitHub
+      run: |
+        # دانلود مستقیم از ریلیزهای گیت‌هاب
+        wget -O xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+        unzip xray.zip
+        chmod +x xray
+
+        # دانلود bore از گیت‌هاب (نسخه لینوکس)
+        wget -O bore.tar.gz https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz
+        tar xzf bore.tar.gz
+        chmod +x bore
+
+    - name: Setup Xray Config and Establish Tunnel
+      run: |
+        # UUID تصادفی و پورت
+        UUID=$(cat /proc/sys/kernel/random/uuid)
+        PORT=$(shuf -i 10000-60000 -n 1)
+
+        # ساخت کانفیگ VLess
+        cat > config.json << EOF
+        {
+          "inbounds": [{
+            "port": $PORT,
+            "listen": "127.0.0.1",
+            "protocol": "vless",
+            "settings": {
+              "clients": [{ "id": "$UUID" }],
+              "decryption": "none"
+            },
+            "streamSettings": {
+              "network": "ws",
+              "wsSettings": { "path": "/" }
+            }
+          }],
+          "outbounds": [{ "protocol": "freedom" }]
+        }
+        EOF
+
+        # اجرای Xray در بکگراند
+        ./xray run -config config.json &
+        sleep 3
+
+        # اجرای bore برای تونل کردن پورت محلی به یک دامنه عمومی (رایگان، بدون ثبت‌نام)
+        ./bore local $PORT --to bore.pub > bore.log 2>&1 &
+        sleep 5
+
+        # استخراج دامنه از خروجی bore
+        REMOTE_HOST=$(grep -o 'bore.pub:[0-9]*' bore.log | head -1 || true)
+        # اگر روش بالا جواب نداد، سعی می‌کنیم از روش جایگزین
+        if [ -z "$REMOTE_HOST" ]; then
+          REMOTE_HOST=$(grep -o '[a-z0-9.-]*bore.pub' bore.log | head -1 || echo "tunnel failed")
+        fi
+        
+        echo "=============================="
+        echo "کانفیگ V2Ray تو (WebSocket):"
+        echo "vless://$UUID@$REMOTE_HOST?encryption=none&security=none&type=ws&path=%2F#GitHub-Bore-Auto"
+        echo "=============================="
+        
+        # ۵ ساعت و نیم زنده نگه داشتن
+        sleep 21000
