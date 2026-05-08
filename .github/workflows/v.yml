@@ -1,99 +1,133 @@
-name: Screenshot Telegram Channel
+name: Fetch Telegram Messages
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: write
 
 jobs:
-  screenshot:
+  fetch:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 15
+
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Install Puppeteer
-        run: |
-          npm init -y
-          npm install puppeteer
+    - name: Setup Puppeteer
+      run: |
+        npm init -y
+        npm install puppeteer
 
-      - name: Take screenshot of channel
-        run: |
-          cat > screenshot.js << 'EOF'
-          const puppeteer = require('puppeteer');
+    - name: Fetch with Cookie
+      run: |
+        cat > fetch.js << 'ENDOFSCRIPT'
+        const puppeteer = require('puppeteer');
+        const fs = require('fs');
 
-          (async () => {
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
+        (async () => {
+          const browser = await puppeteer.launch({
+            headless: 'new',
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+          });
 
-            const page = await browser.newPage();
-            await page.setViewport({ width: 480, height: 800 });
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1280, height: 720 });
 
-            await page.goto('https://t.me/s/AriyanProxy', {
-              waitUntil: 'domcontentloaded',
-              timeout: 30000
-            });
+          await page.setCookie({
+            name: 'stel_disable',
+            value: '1',
+            domain: '.t.me',
+            path: '/'
+          });
 
-            await page.waitForSelector('.tgme_widget_message_wrap', { timeout: 15000 });
+          await page.goto('https://t.me/s/AriyanProxy', {
+            waitUntil: 'networkidle2',
+            timeout: 30000
+          });
 
-            const messages = await page.evaluate(() => {
-              const wraps = document.querySelectorAll('.tgme_widget_message_wrap');
+          await new Promise(r => setTimeout(r, 3000));
+
+          const currentUrl = page.url();
+          console.log('Current URL:', currentUrl);
+
+          await page.screenshot({ path: 'debug.png', fullPage: false });
+
+          const html = await page.content();
+          console.log('HTML length:', html.length);
+          console.log('Contains messages:', html.includes('tgme_widget_message'));
+
+          fs.writeFileSync('debug.html', html);
+
+          let messages = [];
+
+          const hasMessages = html.includes('tgme_widget_message_wrap');
+          
+          if (hasMessages) {
+            messages = await page.evaluate(() => {
+              const wrappers = document.querySelectorAll('.tgme_widget_message_wrap');
               const result = [];
-              
-              wraps.forEach(wrap => {
+              wrappers.forEach(wrap => {
                 const textEl = wrap.querySelector('.tgme_widget_message_text');
-                const timeEl = wrap.querySelector('time');
-                
+                const timeEl = wrap.querySelector('time.datetime');
                 if (textEl && timeEl) {
-                  const text = textEl.innerText.trim();
-                  const date = timeEl.getAttribute('datetime') || timeEl.innerText;
-                  result.push({ date, text });
+                  result.push({
+                    datetime: timeEl.getAttribute('datetime'),
+                    text: textEl.innerText.trim()
+                  });
                 }
               });
-              
               return result;
             });
+          }
 
-            const fs = require('fs');
-            const now = new Date();
-            const cutoff = new Date(now - 2 * 24 * 60 * 60 * 1000);
+          const now = new Date();
+          const twoDaysAgo = new Date(now - 2 * 24 * 60 * 60 * 1000);
 
-            const recent = messages.filter(m => {
-              try {
-                return new Date(m.date) >= cutoff;
-              } catch {
-                return true;
-              }
+          const recent = messages.filter(m => new Date(m.datetime) >= twoDaysAgo);
+
+          let output = `📢 کانال AriyanProxy\n`;
+          output += `📅 تاریخ: ${now.toISOString().split('T')[0]}\n`;
+          output += `📝 پیام‌های ۴۸ ساعت اخیر: ${recent.length}\n`;
+          output += `🔍 کل پیام‌های استخراج شده: ${messages.length}\n`;
+          output += `🌐 URL فعلی: ${currentUrl}\n`;
+          output += `═`.repeat(55) + `\n\n`;
+
+          if (recent.length === 0) {
+            output += `⚠️ پیامی در ۴۸ ساعت اخیر پیدا نشد.\n\n`;
+            if (messages.length > 0) {
+              output += `نمونه پیام‌ها (برای دیباگ):\n`;
+              messages.slice(0, 5).forEach(m => {
+                output += `🕒 ${m.datetime}: ${m.text.substring(0, 100)}...\n`;
+              });
+            } else {
+              output += `💡 صفحه پیام‌ها لود نشد. شاید ریدایرکت شده به صفحه لندینگ.\n`;
+              output += `URL فعلی: ${currentUrl}\n`;
+            }
+          } else {
+            recent.forEach(m => {
+              output += `🕒 ${m.datetime}\n`;
+              output += `${m.text}\n`;
+              output += `─`.repeat(45) + `\n\n`;
             });
+          }
 
-            let output = `کانال AriyanProxy — ${now.toISOString()}\n`;
-            output += '='.repeat(60) + '\n\n';
-            output += `پیام‌های ۴۸ ساعت اخیر: ${recent.length}\n\n`;
+          fs.writeFileSync('telegram_messages.txt', output, 'utf8');
+          console.log(output);
 
-            recent.forEach((m, i) => {
-              output += `${m.date}\n`;
-              output += m.text + '\n';
-              output += '-'.repeat(40) + '\n\n';
-            });
+          await browser.close();
+        })();
+        ENDOFSCRIPT
 
-            fs.writeFileSync('telegram_messages.txt', output, 'utf8');
-            console.log(`Saved ${recent.length} messages`);
+        node fetch.js
 
-            await page.screenshot({ path: 'channel_screenshot.png', fullPage: true });
-            console.log('Screenshot saved');
-
-            await browser.close();
-          })();
-          EOF
-
-          node screenshot.js
-
-      - name: Push
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add telegram_messages.txt channel_screenshot.png
-          git commit -m "Update channel messages — $(date +%s)" || true
-          git pull --rebase
-          git push
+    - name: Push all
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git add telegram_messages.txt debug.html debug.png 2>/dev/null || true
+        git commit -m "📢 AriyanProxy — $(date +%s)" || true
+        git pull --rebase
+        git push
