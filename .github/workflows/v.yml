@@ -16,86 +16,51 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Puppeteer
+    - name: Fetch using tg.i-c-a.su mirror
       run: |
-        npm init -y
-        npm install puppeteer
-
-    - name: Fetch Telegram Channel
-      run: |
-        cat > fetch.js << 'EOF'
-        const puppeteer = require('puppeteer');
-        const fs = require('fs');
-
-        (async () => {
-          const browser = await puppeteer.launch({
-            headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-          });
-
-          const page = await browser.newPage();
-
-          await page.goto('https://t.me/s/AriyanProxy', {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-          });
-
-          await page.waitForSelector('.tgme_widget_message_wrap', { timeout: 10000 });
-
-          const messages = await page.evaluate(() => {
-            const wrappers = document.querySelectorAll('.tgme_widget_message_wrap');
-            const result = [];
-
-            wrappers.forEach(wrap => {
-              const textEl = wrap.querySelector('.tgme_widget_message_text');
-              const timeEl = wrap.querySelector('time.datetime');
-
-              if (textEl && timeEl) {
-                const text = textEl.innerText.trim();
-                const date = timeEl.getAttribute('datetime');
-                result.push({ date, text });
-              }
-            });
-
-            return result;
-          });
-
-          const now = new Date();
-          const twoDaysAgo = new Date(now - 2 * 24 * 60 * 60 * 1000);
-
-          const recentMessages = messages.filter(m => {
-            const msgDate = new Date(m.date);
-            return msgDate >= twoDaysAgo;
-          });
-
-          let output = `📢 کانال AriyanProxy — ${now.toISOString().split('T')[0]}\n`;
-          output += '═'.repeat(60) + '\n\n';
-          output += `📝 پیام‌های ۴۸ ساعت اخیر: ${recentMessages.length} پیام\n\n`;
-
-          recentMessages.forEach((m, i) => {
-            output += `🕒 ${m.date}\n`;
-            output += `${m.text}\n`;
-            output += '─'.repeat(40) + '\n\n';
-          });
-
-          if (recentMessages.length === 0) {
-            output += '⚠️ هیچ پیامی در ۲ روز اخیر پیدا نشد.\n';
-          }
-
-          fs.writeFileSync('telegram_messages.txt', output, 'utf8');
-          console.log(`✅ ذخیره شد: ${recentMessages.length} پیام`);
-
-          await browser.close();
-        })();
-        EOF
-
-        node fetch.js
+        # روش ۱: RSS feed تلگرام
+        curl -s -L -A "Mozilla/5.0" "https://t.me/s/AriyanProxy" -o raw.html
+        
+        # استخراج پیام‌ها با awk و sed
+        grep -oP '<div class="tgme_widget_message_text[^"]*">.*?</div>' raw.html | \
+          sed 's/<[^>]*>//g' | \
+          sed 's/&[^;]*;//g' \
+        > temp_messages.txt
+        
+        grep -oP '<time[^>]*datetime="[^"]*"' raw.html | \
+          grep -oP 'datetime="[^"]*"' | \
+          sed 's/datetime="//;s/"//' \
+        > temp_dates.txt
+        
+        # ترکیب تاریخ و پیام - فقط ۲ روز اخیر
+        now=$(date -u +%s)
+        cutoff=$((now - 172800))  # 48 ساعت
+        
+        echo "📢 کانال AriyanProxy — $(date -u +%Y-%m-%d)" > telegram_messages.txt
+        echo "══════════════════════════════════════════════════" >> telegram_messages.txt
+        echo "" >> telegram_messages.txt
+        
+        paste temp_dates.txt temp_messages.txt | while IFS=$'\t' read -r date msg; do
+          if [ -n "$date" ] && [ -n "$msg" ]; then
+            msg_epoch=$(date -d "$date" +%s 2>/dev/null || echo 0)
+            if [ "$msg_epoch" -ge "$cutoff" ]; then
+              echo "🕒 $date" >> telegram_messages.txt
+              echo "$msg" >> telegram_messages.txt
+              echo "──────────────────────────────────────────────" >> telegram_messages.txt
+              echo "" >> telegram_messages.txt
+            fi
+          fi
+        done
+        
+        echo "تعداد پیام‌های ذخیره شده: $(grep -c '🕒' telegram_messages.txt)" >> telegram_messages.txt
+        
+        cat telegram_messages.txt
 
     - name: Push
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
-        git add telegram_messages.txt
-        git commit -m "📢 Update AriyanProxy messages — $(date +%s)" || true
+        git add telegram_messages.txt raw.html 2>/dev/null || true
+        git commit -m "📢 Update AriyanProxy — $(date +%s)" || true
         git pull --rebase
         git push
