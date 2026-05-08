@@ -1,4 +1,4 @@
-name: CDN-V2Ray
+name: HTTP-Proxy
 
 on:
   workflow_dispatch:
@@ -6,56 +6,96 @@ on:
     - cron: '0 */5 * * *'
 
 jobs:
-  server:
+  proxy:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup
+    - name: Run Simple HTTP Proxy
       run: |
-        wget -q https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-linux-64.zip
-        unzip -o -q Xray-linux-64.zip
-        chmod +x xray
-
-    - name: Run V2Ray WebSocket
-      run: |
-        UUID=$(cat /proc/sys/kernel/random/uuid)
+        PUBLIC_IP=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 icanhazip.com)
         
-        cat > config.json << EOF
-        {
-          "inbounds": [{
-            "port": 8080,
-            "listen": "0.0.0.0",
-            "protocol": "vless",
-            "settings": {
-              "clients": [{"id": "$UUID"}],
-              "decryption": "none"
-            },
-            "streamSettings": {
-              "network": "ws",
-              "wsSettings": {
-                "path": "/"
-              }
-            }
-          }],
-          "outbounds": [{"protocol": "freedom"}]
-        }
-        EOF
+        python3 -c "
+        import socket, threading, select
         
-        ./xray run -config config.json &
+        def handle_client(client):
+            try:
+                request = client.recv(8192)
+                if not request:
+                    client.close()
+                    return
+                
+                lines = request.split(b'\r\n')
+                first_line = lines[0].decode()
+                parts = first_line.split()
+                
+                if len(parts) < 2:
+                    client.close()
+                    return
+                
+                method, url = parts[0], parts[1]
+                
+                if method == 'CONNECT':
+                    host, port = url.split(':')
+                    port = int(port)
+                    client.send(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+                else:
+                    if url.startswith('http://'):
+                        url = url[7:]
+                    host = url.split('/')[0]
+                    port = 80
+                    if ':' in host:
+                        host, port = host.split(':')
+                        port = int(port)
+                
+                remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                remote.settimeout(10)
+                remote.connect((host, port))
+                
+                if method != 'CONNECT':
+                    remote.send(request)
+                
+                sockets = [client, remote]
+                while True:
+                    readable, _, _ = select.select(sockets, [], [], 5)
+                    for s in readable:
+                        data = s.recv(4096)
+                        if not data:
+                            return
+                        if s is client:
+                            remote.send(data)
+                        else:
+                            client.send(data)
+            except:
+                pass
+            finally:
+                client.close()
+                try:
+                    remote.close()
+                except:
+                    pass
+        
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(('0.0.0.0', 8888))
+        server.listen(50)
+        
+        while True:
+            client, addr = server.accept()
+            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+        " &
+        
         sleep 3
         
-        VLESS="vless://$UUID@raw.githubusercontent.com:443?encryption=none&security=tls&type=ws&path=%2F&sni=raw.githubusercontent.com&host=raw.githubusercontent.com#CDN"
-        
-        echo "$VLESS" > vless-cdn.txt
-        echo "Config: $VLESS"
+        echo "$PUBLIC_IP:8888" > proxy.txt
         
         git config user.name "actions"
         git config user.email "actions@github.com"
-        git add vless-cdn.txt
-        git commit -m "Update CDN config $(date +%s)" || true
+        git add proxy.txt
+        git commit -m "Update proxy" || true
         git push
         
+        echo "HTTP Proxy: $PUBLIC_IP:8888"
         sleep 20500
