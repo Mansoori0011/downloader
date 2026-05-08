@@ -21,7 +21,7 @@ jobs:
         npm init -y
         npm install puppeteer
 
-    - name: Fetch with Cookie
+    - name: Fetch with Redirect Block
       run: |
         cat > fetch.js << 'ENDOFSCRIPT'
         const puppeteer = require('puppeteer');
@@ -29,42 +29,70 @@ jobs:
 
         (async () => {
           const browser = await puppeteer.launch({
-            headless: 'new',
+            headless: false,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
           });
 
           const page = await browser.newPage();
           await page.setViewport({ width: 1280, height: 720 });
 
+          // بستن ریدایرکت به tg:// و web.telegram.org
+          await page.setRequestInterception(true);
+          page.on('request', (req) => {
+            const url = req.url();
+            if (url.startsWith('tg://') || url.includes('web.telegram.org')) {
+              console.log('🚫 بلوکه شد:', url.substring(0, 80));
+              req.abort();
+            } else {
+              req.continue();
+            }
+          });
+
+          // تنظیم یه کوکی که فکر کنه قبلاً تأیید شده
           await page.setCookie({
-            name: 'stel_disable',
+            name: 'stel_dt',
             value: '1',
             domain: '.t.me',
             path: '/'
           });
+          await page.setCookie({
+            name: 'stel_ln',
+            value: '2',
+            domain: '.t.me',
+            path: '/'
+          });
 
-          await page.goto('https://t.me/s/AriyanProxy', {
-            waitUntil: 'networkidle2',
+          // رفتن به صفحه با پارامتر جلوگیری از ریدایرکت
+          await page.goto('https://t.me/s/AriyanProxy?before=9999999999', {
+            waitUntil: 'domcontentloaded',
             timeout: 30000
           });
 
+          // صبر برای لود شدن پیام‌ها
           await new Promise(r => setTimeout(r, 3000));
 
-          const currentUrl = page.url();
-          console.log('Current URL:', currentUrl);
+          // اسکرول پایین
+          await page.evaluate(() => {
+            window.scrollBy(0, 3000);
+          });
+          await new Promise(r => setTimeout(r, 1500));
+          await page.evaluate(() => {
+            window.scrollBy(0, 5000);
+          });
+          await new Promise(r => setTimeout(r, 1500));
 
-          await page.screenshot({ path: 'debug.png', fullPage: false });
-
+          // چک HTML
           const html = await page.content();
-          console.log('HTML length:', html.length);
-          console.log('Contains messages:', html.includes('tgme_widget_message'));
+          const hasMessages = html.includes('tgme_widget_message');
 
-          fs.writeFileSync('debug.html', html);
+          console.log('URL:', page.url());
+          console.log('Has messages:', hasMessages);
+
+          // ذخیره HTML برای دیباگ
+          fs.writeFileSync('page.html', html);
 
           let messages = [];
 
-          const hasMessages = html.includes('tgme_widget_message_wrap');
-          
           if (hasMessages) {
             messages = await page.evaluate(() => {
               const wrappers = document.querySelectorAll('.tgme_widget_message_wrap');
@@ -81,6 +109,12 @@ jobs:
               });
               return result;
             });
+          } else {
+            // شاید HTML با method دیگه لود شده
+            const altContent = await page.evaluate(() => {
+              return document.body.innerText.substring(0, 2000);
+            });
+            console.log('Body text sample:', altContent.substring(0, 500));
           }
 
           const now = new Date();
@@ -91,27 +125,24 @@ jobs:
           let output = `📢 کانال AriyanProxy\n`;
           output += `📅 تاریخ: ${now.toISOString().split('T')[0]}\n`;
           output += `📝 پیام‌های ۴۸ ساعت اخیر: ${recent.length}\n`;
-          output += `🔍 کل پیام‌های استخراج شده: ${messages.length}\n`;
-          output += `🌐 URL فعلی: ${currentUrl}\n`;
+          output += `🔍 کل پیام‌ها: ${messages.length}\n`;
           output += `═`.repeat(55) + `\n\n`;
 
-          if (recent.length === 0) {
-            output += `⚠️ پیامی در ۴۸ ساعت اخیر پیدا نشد.\n\n`;
-            if (messages.length > 0) {
-              output += `نمونه پیام‌ها (برای دیباگ):\n`;
-              messages.slice(0, 5).forEach(m => {
-                output += `🕒 ${m.datetime}: ${m.text.substring(0, 100)}...\n`;
-              });
-            } else {
-              output += `💡 صفحه پیام‌ها لود نشد. شاید ریدایرکت شده به صفحه لندینگ.\n`;
-              output += `URL فعلی: ${currentUrl}\n`;
-            }
-          } else {
+          if (recent.length > 0) {
             recent.forEach(m => {
               output += `🕒 ${m.datetime}\n`;
               output += `${m.text}\n`;
               output += `─`.repeat(45) + `\n\n`;
             });
+          } else if (messages.length > 0) {
+            output += `⚠️ پیام‌های اخیر پیدا نشد. ولی ${messages.length} پیام قدیمی‌تر هست.\n\n`;
+            output += `نمونه:\n`;
+            messages.slice(0, 3).forEach(m => {
+              output += `🕒 ${m.datetime}: ${m.text.substring(0, 150)}...\n\n`;
+            });
+          } else {
+            output += `❌ هیچ پیامی استخراج نشد.\n`;
+            output += `💡 توی page.html می‌تونی محتوای واقعی رو ببینی.\n`;
           }
 
           fs.writeFileSync('telegram_messages.txt', output, 'utf8');
@@ -123,11 +154,11 @@ jobs:
 
         node fetch.js
 
-    - name: Push all
+    - name: Push
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
-        git add telegram_messages.txt debug.html debug.png 2>/dev/null || true
+        git add telegram_messages.txt page.html 2>/dev/null || true
         git commit -m "📢 AriyanProxy — $(date +%s)" || true
         git pull --rebase
         git push
