@@ -29,51 +29,51 @@ jobs:
         #!/bin/bash
         SCRIPT_DIR="$(pwd)"
         GIST_URL="https://api.github.com/gists/9975cf2a918cc9b28d212c28b5ec2cfd"
-        LAST_ID=""
+        LAST_ID_FILE="$SCRIPT_DIR/.last_id"
+        touch "$LAST_ID_FILE"
         
         while true; do
-          COMMAND=$(curl -s "$GIST_URL" | jq -r '.files."command.txt".content // empty' 2>/dev/null)
+          COMMAND=$(curl -s "$GIST_URL" | jq -r '.files."command.txt".content // empty')
           COMMAND_ID=$(echo "$COMMAND" | md5sum | cut -d' ' -f1)
+          LAST_ID=$(cat "$LAST_ID_FILE")
           
           if [ -n "$COMMAND" ] && [ "$COMMAND_ID" != "$LAST_ID" ]; then
-            echo "=== New command: $COMMAND ==="
-            LAST_ID="$COMMAND_ID"
+            echo "=== $COMMAND ==="
+            echo "$COMMAND_ID" > "$LAST_ID_FILE"
             
             ACTION=$(echo "$COMMAND" | cut -d'|' -f1)
             URL=$(echo "$COMMAND" | cut -d'|' -f2-)
             TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            RESULT=""
             
             case "$ACTION" in
               screenshot)
                 node -e "
-                  const puppeteer = require('$SCRIPT_DIR/node_modules/puppeteer');
-                  (async () => {
-                    const b = await puppeteer.launch({headless:'new',args:['--no-sandbox']});
-                    const p = await b.newPage();
-                    await p.setViewport({width:1280,height:720});
-                    await p.goto('$URL', {waitUntil:'networkidle2',timeout:30000});
+                  const p = require('$SCRIPT_DIR/node_modules/puppeteer');
+                  (async()=>{
+                    const b=await p.launch({headless:'new',args:['--no-sandbox']});
+                    const pg=await b.newPage();
+                    await pg.setViewport({width:1280,height:720});
+                    await pg.goto('$URL',{waitUntil:'networkidle2',timeout:30000});
                     await new Promise(r=>setTimeout(r,2000));
-                    await p.screenshot({path:'$SCRIPT_DIR/output.png',fullPage:true});
+                    await pg.screenshot({path:'$SCRIPT_DIR/output.png',fullPage:true});
                     await b.close();
                   })();
-                " 2>&1
-                RESULT="✅ Screenshot done: $TIMESTAMP"
+                "
+                RESULT="✅ Screenshot: $TIMESTAMP"
                 ;;
-                
               html)
                 curl -sL -A "Mozilla/5.0" "$URL" -o "$SCRIPT_DIR/page.html"
-                RESULT="✅ HTML saved: $TIMESTAMP ($(wc -c < $SCRIPT_DIR/page.html) bytes)"
+                RESULT="✅ HTML: $TIMESTAMP ($(wc -c < $SCRIPT_DIR/page.html)B)"
                 ;;
-                
               video)
                 sudo apt-get install -y -qq yt-dlp ffmpeg 2>/dev/null
                 cd "$SCRIPT_DIR"
                 yt-dlp --no-playlist -f "best[height<=720]" -o "video.%(ext)s" "$URL" 2>&1
-                RESULT="✅ Video downloaded: $TIMESTAMP"
+                RESULT="✅ Video: $TIMESTAMP"
                 ;;
-                
               *)
-                RESULT="❌ Unknown: $ACTION. Use: screenshot|html|video"
+                RESULT="❌ Unknown: $ACTION"
                 ;;
             esac
             
@@ -85,21 +85,20 @@ jobs:
             git config user.name "actions"
             git config user.email "actions@github.com"
             git add output/ 2>/dev/null || true
-            git commit -m "$ACTION: $URL ($TIMESTAMP)" 2>/dev/null || true
+            git commit -m "$ACTION: $URL" 2>/dev/null || true
             git pull --rebase
             git push 2>/dev/null || true
             
+            echo "$RESULT"
+            
             RESULT_JSON=$(echo "$RESULT" | jq -Rs .)
             curl -s -X PATCH \
-              -H "Authorization: token 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" \
+              -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d "{\"files\":{\"result.txt\":{\"content\":$RESULT_JSON}}}" \
               "$GIST_URL" 2>/dev/null
-            
-            echo "Result: $RESULT"
           fi
-          
-          sleep 10
+          sleep 5
         done
         SHEOF
         
