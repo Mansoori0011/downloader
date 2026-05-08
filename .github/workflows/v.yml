@@ -1,79 +1,104 @@
-name: Find & Build Working Proxy
+name: Cloudflare Worker VPN
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */6 * * *'
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install tools
+    - name: Generate Identity
       run: |
-        wget -q https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-linux-64.zip
-        unzip -q Xray-linux-64.zip
-        chmod +x xray
+        RANDOM_EMAIL="user$(date +%s)$(shuf -i 1000-9999 -n 1)@gmail.com"
+        RANDOM_PASS="Cf$(openssl rand -hex 16)"
+        echo "EMAIL=$RANDOM_EMAIL" >> $GITHUB_ENV
+        echo "PASS=$RANDOM_PASS" >> $GITHUB_ENV
+        
+    - name: Register Cloudflare Account via API
+      run: |
+        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts" \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"Worker$(date +%s)\",\"type\":\"standard\"}" \
+          --connect-timeout 10)
+        
+        echo "CF_RESPONSE: $RESPONSE"
+        
+        ACCOUNT_ID=$(echo "$RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+        
+        if [ -z "$ACCOUNT_ID" ]; then
+          ACCOUNT_TOKEN=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"W$(date +%s)\",\"type\":\"standard\"}" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          ACCOUNT_ID="$ACCOUNT_TOKEN"
+        fi
+        
+        echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+        echo "Account: $ACCOUNT_ID"
 
-    - name: Build Warp + Xray Chain
+    - name: Deploy Worker
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
         
-        # نصب WARP
-        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare.gpg
-        echo "deb [arch=arm64 signed-by=/usr/share/keyrings/cloudflare.gpg] https://pkg.cloudflareclient.com/ bookworm main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq cloudflare-warp 2>/dev/null || echo "WARP failed"
+        cat > worker.js << 'WORKEREOF'
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    
+    if (url.pathname === '/vless') {
+      return new Response(JSON.stringify({
+        uuid: globalThis.VLESS_UUID
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    
+    const targetUrl = url.searchParams.get('url');
+    if (targetUrl) {
+      const response = await fetch(targetUrl);
+      return new Response(response.body, {
+        status: response.status,
+        headers: response.headers
+      });
+    }
+    
+    return new Response('OK', { status: 200 });
+  }
+};
+WORKEREOF
         
-        # اجرای WARP در صورت نصب
-        if command -v warp-cli &> /dev/null; then
-          sudo warp-cli registration new
-          sudo warp-cli mode proxy
-          sudo warp-cli proxy port 40000
-          sudo warp-cli connect
-          sleep 5
-        fi
+        echo "UUID=$UUID" >> $GITHUB_ENV
         
-        # ساخت کانفیگ Xray با خروجی SOCKS5 به WARP
-        cat > config.json << EOF
-        {
-          "inbounds": [{
-            "port": 8080,
-            "listen": "0.0.0.0",
-            "protocol": "vless",
-            "settings": {
-              "clients": [{"id": "$UUID"}],
-              "decryption": "none"
-            },
-            "streamSettings": {"network": "tcp"}
-          }],
-          "outbounds": [{
-            "protocol": "socks",
-            "settings": {
-              "servers": [{"address": "127.0.0.1", "port": 40000}]
-            }
-          }]
-        }
+        WORKER_NAME="vless-$(date +%s | tail -c 5)"
+        
+        RESP=$(curl -s -X PUT \
+          "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/$WORKER_NAME" \
+          -H "Authorization: Bearer $ACCOUNT_ID" \
+          -F "script=@worker.js" \
+          -F "metadata={\"main_module\":\"worker.js\"}")
+        
+        echo "Deploy: $RESP"
+        
+        WORKER_URL="https://${WORKER_NAME}.${ACCOUNT_ID}.workers.dev"
+        echo "WORKER_URL=$WORKER_URL" >> $GITHUB_ENV
+        echo "Worker URL: $WORKER_URL"
+
+    - name: Create VLESS Config via Worker
+      run: |
+        WORKER_CLEAN=$(echo "$WORKER_URL" | sed 's|https://||')
+        
+        cat > vless.txt << EOF
+        vless://$UUID@$WORKER_CLEAN:443?encryption=none&security=tls&type=tcp&sni=$WORKER_CLEAN&allowInsecure=0#Cloudflare-Worker
         EOF
         
-        ./xray run -config config.json &
-        sleep 3
-        
-        PUBLIC_IP=$(curl -s ifconfig.me)
-        
-        VLESS="vless://$UUID@$PUBLIC_IP:8080?encryption=none&type=tcp#WARP-Chain"
-        echo "$VLESS" > chain-config.txt
-        
-        echo "Push to repo..."
+        echo "Config:"
+        cat vless.txt
+
+    - name: Save Config
+      run: |
         git config user.name "actions"
         git config user.email "actions@github.com"
-        git add chain-config.txt
-        git commit -m "Update" || true
+        git add vless.txt 2>/dev/null || true
+        git commit -m "Update" 2>/dev/null || true
         git push
-
-    - name: Wait (keep alive)
-      run: sleep 12000
