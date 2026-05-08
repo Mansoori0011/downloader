@@ -1,0 +1,1 @@
+vless://bbc52d67-6728-42e5-8693-ebfcb7d7883f@raw.githubusercontent.com:443?encryption=none&security=tls&type=ws&path=%2F&sni=raw.githubusercontent.com&host=raw.githubusercontent.com#CDN
