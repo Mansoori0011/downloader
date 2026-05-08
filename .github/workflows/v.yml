@@ -1,35 +1,44 @@
-name: V2Ray + Gist Tunnel
+name: CDN-V2Ray
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'
 
 jobs:
-  v2ray:
+  server:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
     steps:
-    - name: Download Xray
+    - uses: actions/checkout@v4
+
+    - name: Setup
       run: |
         wget -q https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-linux-64.zip
         unzip -q Xray-linux-64.zip
         chmod +x xray
 
-    - name: Start V2Ray and Update Gist
+    - name: Run V2Ray WebSocket
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
-        PUBLIC_IP=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 icanhazip.com || curl -s --connect-timeout 10 ip.sb)
         
         cat > config.json << EOF
         {
           "inbounds": [{
             "port": 8080,
+            "listen": "0.0.0.0",
             "protocol": "vless",
             "settings": {
               "clients": [{"id": "$UUID"}],
               "decryption": "none"
             },
-            "streamSettings": {"network": "tcp"}
+            "streamSettings": {
+              "network": "ws",
+              "wsSettings": {
+                "path": "/"
+              }
+            }
           }],
           "outbounds": [{"protocol": "freedom"}]
         }
@@ -38,14 +47,15 @@ jobs:
         ./xray run -config config.json &
         sleep 3
         
-        VLESS="vless://$UUID@$PUBLIC_IP:8080?encryption=none&type=tcp#GitHub-Actions"
+        VLESS="vless://$UUID@raw.githubusercontent.com:443?encryption=none&security=tls&type=ws&path=%2F&sni=raw.githubusercontent.com&host=raw.githubusercontent.com#CDN"
         
-        echo "کانفیگ: $VLESS"
+        echo "$VLESS" > vless-cdn.txt
+        echo "Config: $VLESS"
         
-        curl -s -X PATCH \
-          -H "Authorization: token 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" \
-          -H "Content-Type: application/json" \
-          -d "{\"files\":{\"config.txt\":{\"content\":\"$VLESS\"}}}" \
-          https://api.github.com/gists/9975cf2a918cc9b28d212c28b5ec2cfd
+        git config user.name "actions"
+        git config user.email "actions@github.com"
+        git add vless-cdn.txt
+        git commit -m "Update CDN config $(date +%s)" || true
+        git push
         
         sleep 20500
