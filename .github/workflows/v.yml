@@ -1,164 +1,105 @@
-name: Fetch Telegram Messages
+name: Always-On Server
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */5 * * *'
 
 permissions:
   contents: write
 
 jobs:
-  fetch:
+  server:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 350
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Puppeteer
+    - name: Setup
       run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq curl wget jq
         npm init -y
         npm install puppeteer
 
-    - name: Fetch with Redirect Block
+    - name: Start Worker
       run: |
-        cat > fetch.js << 'ENDOFSCRIPT'
+        cat > worker.sh << 'SHEOF'
+        #!/bin/bash
+        GIST_URL="https://api.github.com/gists/9975cf2a918cc9b28d212c28b5ec2cfd"
+        LAST_ID=""
+        
+        while true; do
+          COMMAND=$(curl -s "$GIST_URL" | jq -r '.files."command.txt".content // empty' 2>/dev/null)
+          COMMAND_ID=$(echo "$COMMAND" | md5sum | cut -d' ' -f1)
+          
+          if [ -n "$COMMAND" ] && [ "$COMMAND_ID" != "$LAST_ID" ]; then
+            echo "=== New command: $COMMAND ==="
+            LAST_ID="$COMMAND_ID"
+            
+            ACTION=$(echo "$COMMAND" | cut -d'|' -f1)
+            URL=$(echo "$COMMAND" | cut -d'|' -f2-)
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            
+            case "$ACTION" in
+              screenshot)
+                cat > /tmp/scr.js << 'EOF'
         const puppeteer = require('puppeteer');
-        const fs = require('fs');
-
         (async () => {
-          const browser = await puppeteer.launch({
-            headless: false,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-          });
-
-          const page = await browser.newPage();
-          await page.setViewport({ width: 1280, height: 720 });
-
-          // بستن ریدایرکت به tg:// و web.telegram.org
-          await page.setRequestInterception(true);
-          page.on('request', (req) => {
-            const url = req.url();
-            if (url.startsWith('tg://') || url.includes('web.telegram.org')) {
-              console.log('🚫 بلوکه شد:', url.substring(0, 80));
-              req.abort();
-            } else {
-              req.continue();
-            }
-          });
-
-          // تنظیم یه کوکی که فکر کنه قبلاً تأیید شده
-          await page.setCookie({
-            name: 'stel_dt',
-            value: '1',
-            domain: '.t.me',
-            path: '/'
-          });
-          await page.setCookie({
-            name: 'stel_ln',
-            value: '2',
-            domain: '.t.me',
-            path: '/'
-          });
-
-          // رفتن به صفحه با پارامتر جلوگیری از ریدایرکت
-          await page.goto('https://t.me/s/AriyanProxy?before=9999999999', {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000
-          });
-
-          // صبر برای لود شدن پیام‌ها
-          await new Promise(r => setTimeout(r, 3000));
-
-          // اسکرول پایین
-          await page.evaluate(() => {
-            window.scrollBy(0, 3000);
-          });
-          await new Promise(r => setTimeout(r, 1500));
-          await page.evaluate(() => {
-            window.scrollBy(0, 5000);
-          });
-          await new Promise(r => setTimeout(r, 1500));
-
-          // چک HTML
-          const html = await page.content();
-          const hasMessages = html.includes('tgme_widget_message');
-
-          console.log('URL:', page.url());
-          console.log('Has messages:', hasMessages);
-
-          // ذخیره HTML برای دیباگ
-          fs.writeFileSync('page.html', html);
-
-          let messages = [];
-
-          if (hasMessages) {
-            messages = await page.evaluate(() => {
-              const wrappers = document.querySelectorAll('.tgme_widget_message_wrap');
-              const result = [];
-              wrappers.forEach(wrap => {
-                const textEl = wrap.querySelector('.tgme_widget_message_text');
-                const timeEl = wrap.querySelector('time.datetime');
-                if (textEl && timeEl) {
-                  result.push({
-                    datetime: timeEl.getAttribute('datetime'),
-                    text: textEl.innerText.trim()
-                  });
-                }
-              });
-              return result;
-            });
-          } else {
-            // شاید HTML با method دیگه لود شده
-            const altContent = await page.evaluate(() => {
-              return document.body.innerText.substring(0, 2000);
-            });
-            console.log('Body text sample:', altContent.substring(0, 500));
-          }
-
-          const now = new Date();
-          const twoDaysAgo = new Date(now - 2 * 24 * 60 * 60 * 1000);
-
-          const recent = messages.filter(m => new Date(m.datetime) >= twoDaysAgo);
-
-          let output = `📢 کانال AriyanProxy\n`;
-          output += `📅 تاریخ: ${now.toISOString().split('T')[0]}\n`;
-          output += `📝 پیام‌های ۴۸ ساعت اخیر: ${recent.length}\n`;
-          output += `🔍 کل پیام‌ها: ${messages.length}\n`;
-          output += `═`.repeat(55) + `\n\n`;
-
-          if (recent.length > 0) {
-            recent.forEach(m => {
-              output += `🕒 ${m.datetime}\n`;
-              output += `${m.text}\n`;
-              output += `─`.repeat(45) + `\n\n`;
-            });
-          } else if (messages.length > 0) {
-            output += `⚠️ پیام‌های اخیر پیدا نشد. ولی ${messages.length} پیام قدیمی‌تر هست.\n\n`;
-            output += `نمونه:\n`;
-            messages.slice(0, 3).forEach(m => {
-              output += `🕒 ${m.datetime}: ${m.text.substring(0, 150)}...\n\n`;
-            });
-          } else {
-            output += `❌ هیچ پیامی استخراج نشد.\n`;
-            output += `💡 توی page.html می‌تونی محتوای واقعی رو ببینی.\n`;
-          }
-
-          fs.writeFileSync('telegram_messages.txt', output, 'utf8');
-          console.log(output);
-
-          await browser.close();
+          const b = await puppeteer.launch({headless:'new',args:['--no-sandbox']});
+          const p = await b.newPage();
+          await p.goto(process.argv[2], {waitUntil:'networkidle2',timeout:30000});
+          await new Promise(r=>setTimeout(r,2000));
+          await p.screenshot({path:'/tmp/output.png',fullPage:true});
+          await b.close();
         })();
-        ENDOFSCRIPT
-
-        node fetch.js
-
-    - name: Push
-      run: |
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        git add telegram_messages.txt page.html 2>/dev/null || true
-        git commit -m "📢 AriyanProxy — $(date +%s)" || true
-        git pull --rebase
-        git push
+        EOF
+                node /tmp/scr.js "$URL" 2>&1
+                RESULT="✅ Screenshot done: $TIMESTAMP"
+                ;;
+                
+              html)
+                curl -sL -A "Mozilla/5.0" "$URL" -o /tmp/page.html
+                RESULT="✅ HTML saved: $TIMESTAMP ($(wc -c < /tmp/page.html) bytes)"
+                ;;
+                
+              video)
+                sudo apt-get install -y -qq yt-dlp 2>/dev/null
+                yt-dlp --no-playlist -f "best[height<=720]" -o "/tmp/video.%(ext)s" "$URL" 2>&1
+                RESULT="✅ Video downloaded: $TIMESTAMP"
+                ;;
+                
+              *)
+                RESULT="❌ Unknown action: $ACTION. Use: screenshot, html, video"
+                ;;
+            esac
+            
+            curl -s -X PATCH \
+              -H "Authorization: token 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" \
+              -H "Content-Type: application/json" \
+              -d "{\"files\":{\"result.txt\":{\"content\":\"$RESULT\"}}}" \
+              "$GIST_URL" 2>/dev/null
+            
+            echo "Result: $RESULT"
+            
+            # Copy to repo
+            mkdir -p "output/$TIMESTAMP"
+            cp /tmp/output.png "output/$TIMESTAMP/" 2>/dev/null || true
+            cp /tmp/page.html "output/$TIMESTAMP/" 2>/dev/null || true
+            cp /tmp/video.* "output/$TIMESTAMP/" 2>/dev/null || true
+            
+            git config user.name "actions"
+            git config user.email "actions@github.com"
+            git add output/ 2>/dev/null || true
+            git commit -m "Result: $ACTION $TIMESTAMP" 2>/dev/null || true
+            git pull --rebase
+            git push 2>/dev/null || true
+          fi
+          
+          sleep 10
+        done
+        SHEOF
+        
+        chmod +x worker.sh
+        ./worker.sh
