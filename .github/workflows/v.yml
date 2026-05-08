@@ -1,101 +1,106 @@
-name: HTTP-Proxy
+name: Fetch Telegram Channel
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */5 * * *'
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: write
 
 jobs:
-  proxy:
+  fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 10
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Run Simple HTTP Proxy
+    - name: Install Puppeteer
       run: |
-        PUBLIC_IP=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 icanhazip.com)
-        
-        python3 -c "
-        import socket, threading, select
-        
-        def handle_client(client):
-            try:
-                request = client.recv(8192)
-                if not request:
-                    client.close()
-                    return
-                
-                lines = request.split(b'\r\n')
-                first_line = lines[0].decode()
-                parts = first_line.split()
-                
-                if len(parts) < 2:
-                    client.close()
-                    return
-                
-                method, url = parts[0], parts[1]
-                
-                if method == 'CONNECT':
-                    host, port = url.split(':')
-                    port = int(port)
-                    client.send(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-                else:
-                    if url.startswith('http://'):
-                        url = url[7:]
-                    host = url.split('/')[0]
-                    port = 80
-                    if ':' in host:
-                        host, port = host.split(':')
-                        port = int(port)
-                
-                remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                remote.settimeout(10)
-                remote.connect((host, port))
-                
-                if method != 'CONNECT':
-                    remote.send(request)
-                
-                sockets = [client, remote]
-                while True:
-                    readable, _, _ = select.select(sockets, [], [], 5)
-                    for s in readable:
-                        data = s.recv(4096)
-                        if not data:
-                            return
-                        if s is client:
-                            remote.send(data)
-                        else:
-                            client.send(data)
-            except:
-                pass
-            finally:
-                client.close()
-                try:
-                    remote.close()
-                except:
-                    pass
-        
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(('0.0.0.0', 8888))
-        server.listen(50)
-        
-        while True:
-            client, addr = server.accept()
-            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
-        " &
-        
-        sleep 3
-        
-        echo "$PUBLIC_IP:8888" > proxy.txt
-        
+        npm init -y
+        npm install puppeteer
+
+    - name: Fetch Telegram Channel Content
+      run: |
+        cat > fetch.js << 'EOF'
+        const puppeteer = require('puppeteer');
+        const fs = require('fs');
+
+        (async () => {
+          const browser = await puppeteer.launch({
+            headless: 'new',
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+          });
+
+          const page = await browser.newPage();
+          
+          const messages = [];
+          
+          page.on('response', async (response) => {
+            const url = response.url();
+            if (url.includes('t.me/s/AriyanProxy')) {
+              const text = await response.text();
+              
+              const msgRegex = /<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)<\/div>/gs;
+              const dateRegex = /<time[^>]*datetime="([^"]*)"[^>]*>/gs;
+              
+              let match;
+              const dates = [];
+              while ((match = dateRegex.exec(text)) !== null) {
+                dates.push(match[1]);
+              }
+              
+              const msgs = [];
+              while ((match = msgRegex.exec(text)) !== null) {
+                msgs.push(match[1].replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, '').trim());
+              }
+              
+              dates.forEach((d, i) => {
+                if (msgs[i]) {
+                  messages.push({ date: d, text: msgs[i] });
+                }
+              });
+            }
+          });
+
+          await page.goto('https://t.me/s/AriyanProxy', {
+            waitUntil: 'networkidle2',
+            timeout: 30000
+          });
+
+          await page.waitForSelector('.tgme_widget_message_text', { timeout: 10000 });
+
+          const now = new Date();
+          const twoDaysAgo = new Date(now - 2 * 24 * 60 * 60 * 1000);
+
+          const recentMessages = messages.filter(m => {
+            const msgDate = new Date(m.date);
+            return msgDate >= twoDaysAgo;
+          });
+
+          let output = `کانال AriyanProxy - ${now.toISOString()}\n`;
+          output += '='.repeat(60) + '\n\n';
+
+          recentMessages.forEach(m => {
+            output += `[${m.date}] ${m.text}\n`;
+            output += '-'.repeat(40) + '\n\n';
+          });
+
+          fs.writeFileSync('telegram_messages.txt', output, 'utf8');
+          console.log(`Saved ${recentMessages.length} messages`);
+
+          await browser.close();
+        })();
+        EOF
+
+        node fetch.js
+
+    - name: Push
+      run: |
         git config user.name "actions"
         git config user.email "actions@github.com"
-        git add proxy.txt
-        git commit -m "Update proxy" || true
+        git add telegram_messages.txt
+        git commit -m "Update telegram messages $(date +%s)" || true
+        git pull --rebase
         git push
-        
-        echo "HTTP Proxy: $PUBLIC_IP:8888"
-        sleep 20500
