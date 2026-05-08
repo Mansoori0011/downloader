@@ -1,104 +1,51 @@
-name: Cloudflare Worker VPN
+name: V2Ray + Gist Tunnel
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
 
 jobs:
-  deploy:
+  v2ray:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 350
 
     steps:
-    - name: Generate Identity
+    - name: Download Xray
       run: |
-        RANDOM_EMAIL="user$(date +%s)$(shuf -i 1000-9999 -n 1)@gmail.com"
-        RANDOM_PASS="Cf$(openssl rand -hex 16)"
-        echo "EMAIL=$RANDOM_EMAIL" >> $GITHUB_ENV
-        echo "PASS=$RANDOM_PASS" >> $GITHUB_ENV
-        
-    - name: Register Cloudflare Account via API
-      run: |
-        RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts" \
-          -H "Content-Type: application/json" \
-          -d "{\"name\":\"Worker$(date +%s)\",\"type\":\"standard\"}" \
-          --connect-timeout 10)
-        
-        echo "CF_RESPONSE: $RESPONSE"
-        
-        ACCOUNT_ID=$(echo "$RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-        
-        if [ -z "$ACCOUNT_ID" ]; then
-          ACCOUNT_TOKEN=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\":\"W$(date +%s)\",\"type\":\"standard\"}" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-          ACCOUNT_ID="$ACCOUNT_TOKEN"
-        fi
-        
-        echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
-        echo "Account: $ACCOUNT_ID"
+        wget -q https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-linux-64.zip
+        unzip -q Xray-linux-64.zip
+        chmod +x xray
 
-    - name: Deploy Worker
+    - name: Start V2Ray and Update Gist
       run: |
         UUID=$(cat /proc/sys/kernel/random/uuid)
+        PUBLIC_IP=$(curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 icanhazip.com || curl -s --connect-timeout 10 ip.sb)
         
-        cat > worker.js << 'WORKEREOF'
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    
-    if (url.pathname === '/vless') {
-      return new Response(JSON.stringify({
-        uuid: globalThis.VLESS_UUID
-      }), { headers: { 'Content-Type': 'application/json' } });
-    }
-    
-    const targetUrl = url.searchParams.get('url');
-    if (targetUrl) {
-      const response = await fetch(targetUrl);
-      return new Response(response.body, {
-        status: response.status,
-        headers: response.headers
-      });
-    }
-    
-    return new Response('OK', { status: 200 });
-  }
-};
-WORKEREOF
-        
-        echo "UUID=$UUID" >> $GITHUB_ENV
-        
-        WORKER_NAME="vless-$(date +%s | tail -c 5)"
-        
-        RESP=$(curl -s -X PUT \
-          "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/$WORKER_NAME" \
-          -H "Authorization: Bearer $ACCOUNT_ID" \
-          -F "script=@worker.js" \
-          -F "metadata={\"main_module\":\"worker.js\"}")
-        
-        echo "Deploy: $RESP"
-        
-        WORKER_URL="https://${WORKER_NAME}.${ACCOUNT_ID}.workers.dev"
-        echo "WORKER_URL=$WORKER_URL" >> $GITHUB_ENV
-        echo "Worker URL: $WORKER_URL"
-
-    - name: Create VLESS Config via Worker
-      run: |
-        WORKER_CLEAN=$(echo "$WORKER_URL" | sed 's|https://||')
-        
-        cat > vless.txt << EOF
-        vless://$UUID@$WORKER_CLEAN:443?encryption=none&security=tls&type=tcp&sni=$WORKER_CLEAN&allowInsecure=0#Cloudflare-Worker
+        cat > config.json << EOF
+        {
+          "inbounds": [{
+            "port": 8080,
+            "protocol": "vless",
+            "settings": {
+              "clients": [{"id": "$UUID"}],
+              "decryption": "none"
+            },
+            "streamSettings": {"network": "tcp"}
+          }],
+          "outbounds": [{"protocol": "freedom"}]
+        }
         EOF
         
-        echo "Config:"
-        cat vless.txt
-
-    - name: Save Config
-      run: |
-        git config user.name "actions"
-        git config user.email "actions@github.com"
-        git add vless.txt 2>/dev/null || true
-        git commit -m "Update" 2>/dev/null || true
-        git push
+        ./xray run -config config.json &
+        sleep 3
+        
+        VLESS="vless://$UUID@$PUBLIC_IP:8080?encryption=none&type=tcp#GitHub-Actions"
+        
+        echo "کانفیگ: $VLESS"
+        
+        curl -s -X PATCH \
+          -H "Authorization: token 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" \
+          -H "Content-Type: application/json" \
+          -d "{\"files\":{\"config.txt\":{\"content\":\"$VLESS\"}}}" \
+          https://api.github.com/gists/9975cf2a918cc9b28d212c28b5ec2cfd
+        
+        sleep 20500
