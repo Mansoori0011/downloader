@@ -16,7 +16,7 @@ jobs:
     - name: Setup
       run: |
         wget -q https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-linux-64.zip
-        unzip -q Xray-linux-64.zip
+        unzip -o -q Xray-linux-64.zip
         chmod +x xray
 
     - name: Run V2Ray WebSocket
