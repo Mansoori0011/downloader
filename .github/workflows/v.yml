@@ -21,7 +21,7 @@ jobs:
         npm init -y
         npm install puppeteer
 
-    - name: Fetch Telegram Channel Content
+    - name: Fetch Telegram Channel
       run: |
         cat > fetch.js << 'EOF'
         const puppeteer = require('puppeteer');
@@ -34,42 +34,31 @@ jobs:
           });
 
           const page = await browser.newPage();
-          
-          const messages = [];
-          
-          page.on('response', async (response) => {
-            const url = response.url();
-            if (url.includes('t.me/s/AriyanProxy')) {
-              const text = await response.text();
-              
-              const msgRegex = /<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)<\/div>/gs;
-              const dateRegex = /<time[^>]*datetime="([^"]*)"[^>]*>/gs;
-              
-              let match;
-              const dates = [];
-              while ((match = dateRegex.exec(text)) !== null) {
-                dates.push(match[1]);
-              }
-              
-              const msgs = [];
-              while ((match = msgRegex.exec(text)) !== null) {
-                msgs.push(match[1].replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, '').trim());
-              }
-              
-              dates.forEach((d, i) => {
-                if (msgs[i]) {
-                  messages.push({ date: d, text: msgs[i] });
-                }
-              });
-            }
-          });
 
           await page.goto('https://t.me/s/AriyanProxy', {
             waitUntil: 'networkidle2',
             timeout: 30000
           });
 
-          await page.waitForSelector('.tgme_widget_message_text', { timeout: 10000 });
+          await page.waitForSelector('.tgme_widget_message_wrap', { timeout: 10000 });
+
+          const messages = await page.evaluate(() => {
+            const wrappers = document.querySelectorAll('.tgme_widget_message_wrap');
+            const result = [];
+
+            wrappers.forEach(wrap => {
+              const textEl = wrap.querySelector('.tgme_widget_message_text');
+              const timeEl = wrap.querySelector('time.datetime');
+
+              if (textEl && timeEl) {
+                const text = textEl.innerText.trim();
+                const date = timeEl.getAttribute('datetime');
+                result.push({ date, text });
+              }
+            });
+
+            return result;
+          });
 
           const now = new Date();
           const twoDaysAgo = new Date(now - 2 * 24 * 60 * 60 * 1000);
@@ -79,16 +68,22 @@ jobs:
             return msgDate >= twoDaysAgo;
           });
 
-          let output = `کانال AriyanProxy - ${now.toISOString()}\n`;
-          output += '='.repeat(60) + '\n\n';
+          let output = `📢 کانال AriyanProxy — ${now.toISOString().split('T')[0]}\n`;
+          output += '═'.repeat(60) + '\n\n';
+          output += `📝 پیام‌های ۴۸ ساعت اخیر: ${recentMessages.length} پیام\n\n`;
 
-          recentMessages.forEach(m => {
-            output += `[${m.date}] ${m.text}\n`;
-            output += '-'.repeat(40) + '\n\n';
+          recentMessages.forEach((m, i) => {
+            output += `🕒 ${m.date}\n`;
+            output += `${m.text}\n`;
+            output += '─'.repeat(40) + '\n\n';
           });
 
+          if (recentMessages.length === 0) {
+            output += '⚠️ هیچ پیامی در ۲ روز اخیر پیدا نشد.\n';
+          }
+
           fs.writeFileSync('telegram_messages.txt', output, 'utf8');
-          console.log(`Saved ${recentMessages.length} messages`);
+          console.log(`✅ ذخیره شد: ${recentMessages.length} پیام`);
 
           await browser.close();
         })();
@@ -98,9 +93,9 @@ jobs:
 
     - name: Push
       run: |
-        git config user.name "actions"
-        git config user.email "actions@github.com"
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
         git add telegram_messages.txt
-        git commit -m "Update telegram messages $(date +%s)" || true
+        git commit -m "📢 Update AriyanProxy messages — $(date +%s)" || true
         git pull --rebase
         git push
