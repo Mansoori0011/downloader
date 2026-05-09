@@ -1,4 +1,4 @@
-name: Direct HTTP Proxy
+name: Telegram MTProto Proxy
 on:
   workflow_dispatch:
 
@@ -8,50 +8,45 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      - name: Setup HTTP Proxy
+      - name: Download and Run MTProto Proxy
         run: |
-          sudo apt update
-          sudo apt install -y dnsmasq tinyproxy
+          # دانلود آخرین نسخه mtproto.zig که بسیار سبک و قدرتمنده [citation:3]
+          curl -L -o mtproto-proxy https://github.com/sleep3r/mtproto.zig/releases/latest/download/mtproto-proxy-linux-amd64
+          chmod +x mtproto-proxy
 
-          # DNS داخلی
-          echo "no-resolv" | sudo tee /etc/dnsmasq.d/proxy.conf
-          echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.d/proxy.conf
-          echo "server=1.1.1.1" | sudo tee -a /etc/dnsmasq.d/proxy.conf
-          echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.d/proxy.conf
-          echo "bind-interfaces" | sudo tee -a /etc/dnsmasq.d/proxy.conf
-          sudo systemctl restart dnsmasq
+          # تولید یک سکرت تصادفی و قدرتمند برای پروکسی
+          SECRET=$(head -c 16 /dev/urandom | xxd -ps)
+          echo "SECRET=$SECRET" >> $GITHUB_ENV
 
-          # پروکسی HTTP
-          sudo sed -i 's/^Allow 127.0.0.1/#/' /etc/tinyproxy/tinyproxy.conf
-          sudo sed -i 's/^Allow ::1/#/' /etc/tinyproxy/tinyproxy.conf
-          echo "Allow 0.0.0.0/0" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
-          echo "Listen 0.0.0.0" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
-          echo "Port 8080" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
-          sudo systemctl restart tinyproxy
+          # اجرای پروکسی با تنظیمات بهینه برای دور زدن فیلترینگ
+          # پورت 443 و Fake-TLS فعال شود تا ترافیک شبیه HTTPS معمولی دیده شود [citation:3]
+          ./mtproto-proxy --port 443 --secret "$SECRET" --tls-domain "www.google.com" --drs &
+          
+          echo "✅ MTProto Proxy is ready."
 
-      - name: Get Public IP
+      - name: Create Tunnel & Get Connection Link
         run: |
-          PUBLIC_IP=$(curl -s ifconfig.me)
-          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          # نصب cloudflared برای ایجاد تونل امن
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          
+          # ایجاد تونل برای پورت 443 که پروکسی روی آن اجرا شده
+          nohup cloudflared tunnel --url tcp://localhost:443 > tunnel.log 2>&1 &
+          sleep 15
+          
+          # استخراج آدرس تونل
+          TUNNEL_URL=$(grep -oP 'trycloudflare\.com:\d+' tunnel.log | head -1)
+          TUNNEL_HOST=$(echo $TUNNEL_URL | cut -d: -f1)
+          TUNNEL_PORT=$(echo $TUNNEL_URL | cut -d: -f2)
+          
+          # ساخت لینک اتصال تلگرام
+          TG_LINK="tg://proxy?server=$TUNNEL_HOST&port=$TUNNEL_PORT&secret=ee$SECRET"
           
           echo "========================================="
-          echo "✅ PROXY READY!"
-          echo "📱 v2rayNG Settings:"
-          echo "   Type: HTTP"
-          echo "   Server: $PUBLIC_IP"
-          echo "   Port: 8080"
+          echo "✅ پروکسی تلگرام آماده است!"
+          echo "📱 لینک اتصال (کپی کنید و در مرورگر باز کنید):"
+          echo "$TG_LINK"
           echo "========================================="
-          
-          mkdir -p config
-          echo "Type: HTTP" > config/proxy-config.txt
-          echo "Server: $PUBLIC_IP" >> config/proxy-config.txt
-          echo "Port: 8080" >> config/proxy-config.txt
-
-      - name: Upload Config
-        uses: actions/upload-artifact@v4
-        with:
-          name: proxy-config
-          path: config/
 
       - name: Keep Alive
         run: sleep 21600
