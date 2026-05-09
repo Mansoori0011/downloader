@@ -1,106 +1,83 @@
-name: Nova Proxy Server
+name: Nova Proxy with Built-in DNS
 on:
   workflow_dispatch:
 
 jobs:
-  server:
+  proxy:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
     steps:
-      - name: Checkout Nova Proxy Repo
-        uses: actions/checkout@v4
-        with:
-          repository: IRNova/Nova-Proxy-App
-
-      - name: Setup Server Manually
+      - name: Setup DNS and Proxy Server
         run: |
-          # تولید رمز تصادفی
-          AUTH_SECRET=$(openssl rand -hex 16)
-          echo "AUTH_SECRET=$AUTH_SECRET" >> $GITHUB_ENV
+          # نصب dnsmasq برای حل DNS محلی
+          sudo apt update
+          sudo apt install -y dnsmasq curl
           
-          # کپی فایل‌های سرور
-          sudo mkdir -p /opt/nova-proxy
-          sudo cp sni-server/worker.js /opt/nova-proxy/
+          # تنظیم dnsmasq برای استفاده از DNS ریشه (بدون فیلتر)
+          sudo mkdir -p /etc/dnsmasq.d
+          echo "no-resolv" | sudo tee /etc/dnsmasq.d/custom.conf
+          echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.d/custom.conf
+          echo "server=1.1.1.1" | sudo tee -a /etc/dnsmasq.d/custom.conf
+          echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.d/custom.conf
+          echo "bind-interfaces" | sudo tee -a /etc/dnsmasq.d/custom.conf
           
-          # نصب Node.js و اجرای worker
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt-get install -y nodejs
+          sudo systemctl restart dnsmasq
           
-          # ایجاد یک سرور ساده Node.js برای اجرای worker
-          cd /opt/nova-proxy
-          sudo npm init -y
+          # تست DNS
+          echo "Testing DNS..."
+          nslookup google.com 127.0.0.1
           
-          # ایجاد فایل سرور اصلی
-          cat > server.js << 'EOF'
-          const http = require('http');
-          const url = require('url');
+          # ایجاد پروکسی HTTP با قابلیت حل DNS داخلی
+          cat > proxy-server.py << 'EOF'
+          import http.server
+          import socketserver
+          import urllib.request
+          import socket
           
-          const AUTH_SECRET = process.env.AUTH_SECRET || 'default';
-          const TARGET_HOST = process.argv[2] || 'localhost';
-          const TARGET_PORT = process.argv[3] || 8080;
+          class Proxy(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  try:
+                      # استخراج آدرس مقصد از مسیر
+                      path = self.path
+                      if path.startswith('/http'):
+                          url = path[1:]  # حذف / اول
+                      else:
+                          # فرمت جدید: /http://google.com
+                          url = self.path[1:]
+                      
+                      print(f"Proxying: {url}")
+                      
+                      # تنظیم DNS محلی
+                      req = urllib.request.Request(url)
+                      req.add_header('Host', urllib.parse.urlparse(url).netloc)
+                      
+                      response = urllib.request.urlopen(req, timeout=30)
+                      
+                      self.send_response(200)
+                      self.send_header('Content-Type', response.headers.get('Content-Type', 'text/html'))
+                      self.end_headers()
+                      self.wfile.write(response.read())
+                      
+                  except Exception as e:
+                      print(f"Error: {e}")
+                      self.send_response(500)
+                      self.end_headers()
+                      self.wfile.write(f"Proxy Error: {e}".encode())
           
-          const server = http.createServer(async (req, res) => {
-            try {
-              const parsedUrl = url.parse(req.url);
-              const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
-              
-              // فرمت: /{token}/{target_host}/{path}
-              if (pathParts.length < 2) {
-                res.writeHead(400);
-                return res.end('Invalid request');
-              }
-              
-              const token = pathParts[0];
-              const targetHost = pathParts[1];
-              const targetPath = '/' + pathParts.slice(2).join('/');
-              
-              if (token !== AUTH_SECRET) {
-                res.writeHead(403);
-                return res.end('Forbidden');
-              }
-              
-              // پروکسی درخواست
-              const options = {
-                hostname: targetHost,
-                port: 443,
-                path: targetPath + (parsedUrl.search || ''),
-                method: req.method,
-                headers: { ...req.headers, host: targetHost }
-              };
-              
-              const proxyReq = http.request(options, (proxyRes) => {
-                res.writeHead(proxyRes.statusCode, proxyRes.headers);
-                proxyRes.pipe(res);
-              });
-              
-              proxyReq.on('error', (e) => {
-                res.writeHead(500);
-                res.end('Proxy error: ' + e.message);
-              });
-              
-              req.pipe(proxyReq);
-              
-            } catch(e) {
-              res.writeHead(500);
-              res.end('Server error: ' + e.message);
-            }
-          });
-          
-          server.listen(8080, () => {
-            console.log(`Nova Proxy Server running on port 8080`);
-            console.log(`Auth Secret: ${AUTH_SECRET}`);
-          });
+          PORT = 8080
+          with socketserver.TCPServer(("", PORT), Proxy) as httpd:
+              print(f"Proxy running on port {PORT}")
+              httpd.serve_forever()
           EOF
           
-          # اجرای سرور
-          sudo AUTH_SECRET=$AUTH_SECRET node server.js &
+          # اجرای پروکسی
+          python3 proxy-server.py &
           sleep 3
           
-          echo "✅ Server running!"
-          echo "🔑 Auth Secret: $AUTH_SECRET"
+          echo "✅ Proxy with DNS resolver is running!"
 
-      - name: Create Cloudflare Tunnel
+      - name: Create Tunnel
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
@@ -110,30 +87,26 @@ jobs:
           
           TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log)
           
-          echo ""
           echo "========================================="
-          echo "✅ Nova Proxy Server Ready!"
-          echo "🌐 Tunnel URL: $TUNNEL_URL"
-          echo "🔑 Auth Secret: $AUTH_SECRET"
+          echo "🌐 Tunnel: $TUNNEL_URL"
+          echo "📱 iPhone/Mac Proxy:"
+          echo "   Server: $(echo $TUNNEL_URL | sed 's|https://||')"
+          echo "   Port: 443"
           echo ""
-          echo "📱 v2rayNG Settings:"
-          echo "Type: HTTP"
-          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')"
-          echo "Port: 443"
-          echo "Path: /$AUTH_SECRET"
+          echo "📋 v2rayNG Import:"
+          echo "vmess://$(echo -n "{\"add\":\"$(echo $TUNNEL_URL | sed 's|https://||')\",\"aid\":\"0\",\"host\":\"$(echo $TUNNEL_URL | sed 's|https://||')\",\"id\":\"ffffffff-ffff-ffff-ffff-ffffffffffff\",\"net\":\"tcp\",\"path\":\"/\",\"port\":\"443\",\"ps\":\"Nova+DNS\",\"tls\":\"tls\",\"type\":\"http\",\"v\":\"2\"}" | base64 -w 0)"
           echo "========================================="
           
           mkdir -p config
-          echo "Type: HTTP" > config/v2ray-config.txt
-          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')" >> config/v2ray-config.txt
-          echo "Port: 443" >> config/v2ray-config.txt
-          echo "Path: /$AUTH_SECRET" >> config/v2ray-config.txt
-          echo "Auth Secret: $AUTH_SECRET" >> config/v2ray-config.txt
+          echo "Server: $(echo $TUNNEL_URL | sed 's|https://||')" > config/proxy-config.txt
+          echo "Port: 443" >> config/proxy-config.txt
+          echo "Type: HTTP" >> config/proxy-config.txt
+          echo "Path: /" >> config/proxy-config.txt
 
       - name: Upload Config
         uses: actions/upload-artifact@v4
         with:
-          name: nova-v2ray-config
+          name: proxy-config
           path: config/
 
       - name: Keep Alive
