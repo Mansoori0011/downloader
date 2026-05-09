@@ -1,117 +1,57 @@
-name: Whitelist Bypass Proxy
+name: Direct HTTP Proxy
 on:
   workflow_dispatch:
 
 jobs:
-  bypass:
+  proxy:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
     steps:
-      - name: Setup DNS & Proxy Server
+      - name: Setup HTTP Proxy
         run: |
           sudo apt update
-          sudo apt install -y dnsmasq tinyproxy python3
+          sudo apt install -y dnsmasq tinyproxy
 
-          # --- 1. DNS داخلی ---
-          echo "no-resolv" | sudo tee /etc/dnsmasq.d/bypass.conf
-          echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.d/bypass.conf
-          echo "server=1.1.1.1" | sudo tee -a /etc/dnsmasq.d/bypass.conf
-          echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.d/bypass.conf
-          echo "bind-interfaces" | sudo tee -a /etc/dnsmasq.d/bypass.conf
+          # DNS داخلی
+          echo "no-resolv" | sudo tee /etc/dnsmasq.d/proxy.conf
+          echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.d/proxy.conf
+          echo "server=1.1.1.1" | sudo tee -a /etc/dnsmasq.d/proxy.conf
+          echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.d/proxy.conf
+          echo "bind-interfaces" | sudo tee -a /etc/dnsmasq.d/proxy.conf
           sudo systemctl restart dnsmasq
 
-          # --- 2. پروکسی HTTP واقعی (tinyproxy) ---
-          sudo sed -i 's/^Allow 127.0.0.1/# Allow 127.0.0.1/' /etc/tinyproxy/tinyproxy.conf
-          sudo sed -i 's/^Allow ::1/# Allow ::1/' /etc/tinyproxy/tinyproxy.conf
+          # پروکسی HTTP
+          sudo sed -i 's/^Allow 127.0.0.1/#/' /etc/tinyproxy/tinyproxy.conf
+          sudo sed -i 's/^Allow ::1/#/' /etc/tinyproxy/tinyproxy.conf
           echo "Allow 0.0.0.0/0" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
           echo "Listen 0.0.0.0" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
           echo "Port 8080" | sudo tee -a /etc/tinyproxy/tinyproxy.conf
           sudo systemctl restart tinyproxy
 
-          # --- 3. صفحه وب برای مرور دستی (اختیاری ولی مفید) ---
-          mkdir ~/web-proxy
-          cat > ~/web-proxy/server.py << 'EOF'
-          import http.server, urllib.request, urllib.parse, ssl, os
-          class ProxyHTTP(http.server.BaseHTTPRequestHandler):
-              def do_GET(self):
-                  if self.path == '/' or self.path == '/index.html':
-                      self.send_response(200); self.send_header('Content-type','text/html'); self.end_headers()
-                      with open('/home/runner/web-proxy/index.html','rb') as f: self.wfile.write(f.read())
-                  elif self.path.startswith('/fetch?'):
-                      target_url = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('url',[None])[0]
-                      if target_url:
-                          try:
-                              req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0'})
-                              context = ssl._create_unverified_context()
-                              resp = urllib.request.urlopen(req, context=context, timeout=15)
-                              self.send_response(200)
-                              self.send_header('Content-type', resp.headers.get('Content-Type','text/html'))
-                              self.end_headers()
-                              self.wfile.write(resp.read())
-                          except Exception as e:
-                              self.send_response(500); self.end_headers()
-                              self.wfile.write(f"Error: {e}".encode())
-                      else:
-                          self.send_response(400); self.end_headers()
-          if __name__ == '__main__':
-              httpd = http.server.HTTPServer(('0.0.0.0', 8081), ProxyHTTP)
-              print('Web Proxy Interface on port 8081')
-              httpd.serve_forever()
-          EOF
-
-          cat > ~/web-proxy/index.html << 'HTML'
-          <!DOCTYPE html><html><head><title>Web Proxy</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>body{font-family:Arial;margin:20px;background:#1e1e1e;color:#fff}
-          input,button{padding:10px;font-size:16px;margin:5px}
-          input{width:80%;background:#333;color:#fff;border:1px solid #555}
-          button{background:#0088cc;color:#fff;border:none;cursor:pointer}
-          iframe{width:100%;height:80vh;border:1px solid #333;margin-top:20px;background:#fff}</style></head>
-          <body><h2>🌐 Web Proxy</h2>
-          <input type="text" id="url" placeholder="https://example.com" value="https://youtube.com">
-          <button onclick="loadURL()">Go</button>
-          <div><iframe id="frame" src="about:blank"></iframe></div>
-          <script>function loadURL(){let u=document.getElementById('url').value;
-          document.getElementById('frame').src='/fetch?url='+encodeURIComponent(u);}
-          window.onload=loadURL;</script></body></html>
-          HTML
-
-          python3 ~/web-proxy/server.py &
-          echo "✅ Proxy & Web UI Ready"
-
-      - name: Create Tunnel & Show Results
+      - name: Get Public IP
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-
-          # تونل برای پروکسی اصلی (پورت 8080)
-          nohup cloudflared tunnel --url http://localhost:8080 > tunnel-proxy.log 2>&1 &
-          sleep 10
-          PROXY_TUNNEL=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel-proxy.log | head -1)
-          PROXY_HOST=$(echo $PROXY_TUNNEL | sed 's|https://||')
-
-          # تونل برای رابط وب (پورت 8081)
-          nohup cloudflared tunnel --url http://localhost:8081 > tunnel-web.log 2>&1 &
-          sleep 10
-          WEB_TUNNEL=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel-web.log | head -1)
-          WEB_HOST=$(echo $WEB_TUNNEL | sed 's|https://||')
-
+          PUBLIC_IP=$(curl -s ifconfig.me)
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          
           echo "========================================="
-          echo "✅ SETUP COMPLETE"
-          echo "📱 ROUTING PROXY (v2rayNG/Sifra):"
-          echo "   Type: HTTP | Server: $PROXY_HOST | Port: 443"
-          echo "🌐 WEB PROXY (Manual Browsing):"
-          echo "   $WEB_HOST"
+          echo "✅ PROXY READY!"
+          echo "📱 v2rayNG Settings:"
+          echo "   Type: HTTP"
+          echo "   Server: $PUBLIC_IP"
+          echo "   Port: 8080"
           echo "========================================="
-
+          
           mkdir -p config
-          echo "HTTP Proxy: $PROXY_HOST:443" > config/all-configs.txt
-          echo "Web Proxy: $WEB_HOST" >> config/all-configs.txt
+          echo "Type: HTTP" > config/proxy-config.txt
+          echo "Server: $PUBLIC_IP" >> config/proxy-config.txt
+          echo "Port: 8080" >> config/proxy-config.txt
 
-      - name: Upload Config & Keep Alive
+      - name: Upload Config
         uses: actions/upload-artifact@v4
         with:
-          name: bypass-configs
+          name: proxy-config
           path: config/
-      - run: sleep 21600
+
+      - name: Keep Alive
+        run: sleep 21600
