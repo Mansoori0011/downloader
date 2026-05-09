@@ -5,6 +5,7 @@
 - [app-release](./app-release)
 - [mhrv-rs-android-arm64-v8a-v1.9.18](./mhrv-rs-android-arm64-v8a-v1.9.18)
 - [termux-app_v0.119.0-beta.3+apt-android-7-github-debug_arm64-v8a](./termux-app_v0.119.0-beta.3+apt-android-7-github-debug_arm64-v8a)
+- [yuhaiin-android-arm64](./yuhaiin-android-arm64)
 
 ---
 
