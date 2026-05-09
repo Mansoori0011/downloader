@@ -1,11 +1,60 @@
-name: Web Shell VPS
+name: Nova Proxy Server
 on:
   workflow_dispatch:
 
 jobs:
-  shell:
+  server:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
+
     steps:
-      - name: Setup Web Shell
-        uses: P3TERX/ssh2actions@v1.0.0
-        timeout-minutes: 360
+      - name: Checkout Nova Proxy Repo
+        uses: actions/checkout@v4
+        with:
+          repository: IRNova/Nova-Proxy-App
+
+      - name: Install Server
+        run: |
+          cd sni-server
+          chmod +x install.sh
+          sudo bash install.sh
+          
+      - name: Create Tunnel & Get Config
+        run: |
+          # نصب Cloudflare Tunnel
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          
+          # اجرای تونل برای پورت پروکسی (معمولاً 8080)
+          nohup cloudflared tunnel --url http://localhost:8080 > tunnel.log 2>&1 &
+          sleep 15
+          
+          TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log)
+          
+          echo "========================================="
+          echo "✅ Nova Proxy Server Ready!"
+          echo "🌐 Tunnel URL: $TUNNEL_URL"
+          echo "🔑 Auth Token: (آنچه در install.sh تنظیم شده)"
+          echo "========================================="
+          echo ""
+          echo "📱 v2rayNG Config:"
+          echo "Type: HTTP"
+          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')"
+          echo "Port: 443"
+          echo "Username: (your_token)"
+          echo ""
+          
+          # ذخیره برای دانلود
+          mkdir -p config
+          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')" > config/v2ray-config.txt
+          echo "Port: 443" >> config/v2ray-config.txt
+          echo "Type: HTTP" >> config/v2ray-config.txt
+          
+      - name: Upload Config
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-config
+          path: config/
+
+      - name: Keep Alive (6h)
+        run: sleep 21600
