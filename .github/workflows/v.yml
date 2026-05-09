@@ -13,48 +13,128 @@ jobs:
         with:
           repository: IRNova/Nova-Proxy-App
 
-      - name: Install Server
+      - name: Setup Server Manually
         run: |
-          cd sni-server
-          chmod +x install.sh
-          sudo bash install.sh
+          # تولید رمز تصادفی
+          AUTH_SECRET=$(openssl rand -hex 16)
+          echo "AUTH_SECRET=$AUTH_SECRET" >> $GITHUB_ENV
           
-      - name: Create Tunnel & Get Config
+          # کپی فایل‌های سرور
+          sudo mkdir -p /opt/nova-proxy
+          sudo cp sni-server/worker.js /opt/nova-proxy/
+          
+          # نصب Node.js و اجرای worker
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          
+          # ایجاد یک سرور ساده Node.js برای اجرای worker
+          cd /opt/nova-proxy
+          sudo npm init -y
+          
+          # ایجاد فایل سرور اصلی
+          cat > server.js << 'EOF'
+          const http = require('http');
+          const url = require('url');
+          
+          const AUTH_SECRET = process.env.AUTH_SECRET || 'default';
+          const TARGET_HOST = process.argv[2] || 'localhost';
+          const TARGET_PORT = process.argv[3] || 8080;
+          
+          const server = http.createServer(async (req, res) => {
+            try {
+              const parsedUrl = url.parse(req.url);
+              const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+              
+              // فرمت: /{token}/{target_host}/{path}
+              if (pathParts.length < 2) {
+                res.writeHead(400);
+                return res.end('Invalid request');
+              }
+              
+              const token = pathParts[0];
+              const targetHost = pathParts[1];
+              const targetPath = '/' + pathParts.slice(2).join('/');
+              
+              if (token !== AUTH_SECRET) {
+                res.writeHead(403);
+                return res.end('Forbidden');
+              }
+              
+              // پروکسی درخواست
+              const options = {
+                hostname: targetHost,
+                port: 443,
+                path: targetPath + (parsedUrl.search || ''),
+                method: req.method,
+                headers: { ...req.headers, host: targetHost }
+              };
+              
+              const proxyReq = http.request(options, (proxyRes) => {
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                proxyRes.pipe(res);
+              });
+              
+              proxyReq.on('error', (e) => {
+                res.writeHead(500);
+                res.end('Proxy error: ' + e.message);
+              });
+              
+              req.pipe(proxyReq);
+              
+            } catch(e) {
+              res.writeHead(500);
+              res.end('Server error: ' + e.message);
+            }
+          });
+          
+          server.listen(8080, () => {
+            console.log(`Nova Proxy Server running on port 8080`);
+            console.log(`Auth Secret: ${AUTH_SECRET}`);
+          });
+          EOF
+          
+          # اجرای سرور
+          sudo AUTH_SECRET=$AUTH_SECRET node server.js &
+          sleep 3
+          
+          echo "✅ Server running!"
+          echo "🔑 Auth Secret: $AUTH_SECRET"
+
+      - name: Create Cloudflare Tunnel
         run: |
-          # نصب Cloudflare Tunnel
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           
-          # اجرای تونل برای پورت پروکسی (معمولاً 8080)
           nohup cloudflared tunnel --url http://localhost:8080 > tunnel.log 2>&1 &
           sleep 15
           
           TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log)
           
+          echo ""
           echo "========================================="
           echo "✅ Nova Proxy Server Ready!"
           echo "🌐 Tunnel URL: $TUNNEL_URL"
-          echo "🔑 Auth Token: (آنچه در install.sh تنظیم شده)"
-          echo "========================================="
+          echo "🔑 Auth Secret: $AUTH_SECRET"
           echo ""
-          echo "📱 v2rayNG Config:"
+          echo "📱 v2rayNG Settings:"
           echo "Type: HTTP"
           echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')"
           echo "Port: 443"
-          echo "Username: (your_token)"
-          echo ""
+          echo "Path: /$AUTH_SECRET"
+          echo "========================================="
           
-          # ذخیره برای دانلود
           mkdir -p config
-          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')" > config/v2ray-config.txt
+          echo "Type: HTTP" > config/v2ray-config.txt
+          echo "Address: $(echo $TUNNEL_URL | sed 's|https://||')" >> config/v2ray-config.txt
           echo "Port: 443" >> config/v2ray-config.txt
-          echo "Type: HTTP" >> config/v2ray-config.txt
-          
+          echo "Path: /$AUTH_SECRET" >> config/v2ray-config.txt
+          echo "Auth Secret: $AUTH_SECRET" >> config/v2ray-config.txt
+
       - name: Upload Config
         uses: actions/upload-artifact@v4
         with:
-          name: nova-config
+          name: nova-v2ray-config
           path: config/
 
-      - name: Keep Alive (6h)
+      - name: Keep Alive
         run: sleep 21600
