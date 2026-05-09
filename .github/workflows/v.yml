@@ -1,9 +1,11 @@
-name: Debug with SSH
-on: workflow_dispatch
+name: Web Shell VPS
+on:
+  workflow_dispatch:
 
 jobs:
-  debug:
+  shell:
     runs-on: ubuntu-latest
     steps:
-    - name: Setup tmate session
-      uses: mxschmitt/action-tmate@v3
+      - name: Setup Web Shell
+        uses: P3TERX/ssh2actions@v1.0.0
+        timeout-minutes: 360
