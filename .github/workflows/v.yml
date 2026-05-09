@@ -10,43 +10,78 @@ jobs:
     steps:
       - name: Download and Run MTProto Proxy
         run: |
-          # دانلود آخرین نسخه mtproto.zig که بسیار سبک و قدرتمنده [citation:3]
+          # دانلود mtproto.zig
           curl -L -o mtproto-proxy https://github.com/sleep3r/mtproto.zig/releases/latest/download/mtproto-proxy-linux-amd64
           chmod +x mtproto-proxy
 
-          # تولید یک سکرت تصادفی و قدرتمند برای پروکسی
+          # تولید سکرت تصادفی
           SECRET=$(head -c 16 /dev/urandom | xxd -ps)
           echo "SECRET=$SECRET" >> $GITHUB_ENV
 
-          # اجرای پروکسی با تنظیمات بهینه برای دور زدن فیلترینگ
-          # پورت 443 و Fake-TLS فعال شود تا ترافیک شبیه HTTPS معمولی دیده شود [citation:3]
-          ./mtproto-proxy --port 443 --secret "$SECRET" --tls-domain "www.google.com" --drs &
+          # اجرای پروکسی روی پورت 8443 (فال‌بک)
+          ./mtproto-proxy --port 8443 --secret "$SECRET" --tls-domain "www.google.com" &
+          sleep 3
           
-          echo "✅ MTProto Proxy is ready."
+          echo "✅ MTProto Proxy is running on port 8443"
 
-      - name: Create Tunnel & Get Connection Link
+      - name: Create Cloudflare Tunnel
         run: |
-          # نصب cloudflared برای ایجاد تونل امن
+          # نصب cloudflared
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           
-          # ایجاد تونل برای پورت 443 که پروکسی روی آن اجرا شده
-          nohup cloudflared tunnel --url tcp://localhost:443 > tunnel.log 2>&1 &
+          # ایجاد تونل
+          cloudflared tunnel --url tcp://localhost:8443 > tunnel.log 2>&1 &
           sleep 15
           
-          # استخراج آدرس تونل
-          TUNNEL_URL=$(grep -oP 'trycloudflare\.com:\d+' tunnel.log | head -1)
-          TUNNEL_HOST=$(echo $TUNNEL_URL | cut -d: -f1)
-          TUNNEL_PORT=$(echo $TUNNEL_URL | cut -d: -f2)
+          # نمایش کل لاگ برای دیباگ
+          echo "--- Tunnel Log ---"
+          cat tunnel.log
+          echo "------------------"
           
-          # ساخت لینک اتصال تلگرام
-          TG_LINK="tg://proxy?server=$TUNNEL_HOST&port=$TUNNEL_PORT&secret=ee$SECRET"
+          # استخراج آدرس با روش دقیق‌تر
+          TUNNEL_LINE=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log || grep -oP '[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log || echo "")
           
-          echo "========================================="
-          echo "✅ پروکسی تلگرام آماده است!"
-          echo "📱 لینک اتصال (کپی کنید و در مرورگر باز کنید):"
-          echo "$TG_LINK"
-          echo "========================================="
+          if [ -z "$TUNNEL_LINE" ]; then
+            # روش دوم: جستجوی الگوی متفاوت
+            TUNNEL_LINE=$(grep -oP 'Registered tunnel connection.*' tunnel.log || echo "")
+            echo "TUNNEL_LINE: $TUNNEL_LINE"
+          fi
+          
+          echo "Extracted: $TUNNEL_LINE"
+          
+          # استخراج هاست و پورت از URL
+          if [[ $TUNNEL_LINE == *"trycloudflare.com"* ]]; then
+            TUNNEL_HOST=$(echo $TUNNEL_LINE | sed 's|https://||' | cut -d: -f1)
+            
+            # پورت معمولاً در خروجی trycloudflare.com نمایش داده می‌شود
+            TUNNEL_PORT=$(grep -oP 'trycloudflare\.com:\K\d+' tunnel.log || echo "443")
+            
+            echo "TUNNEL_HOST=$TUNNEL_HOST" >> $GITHUB_ENV
+            echo "TUNNEL_PORT=$TUNNEL_PORT" >> $GITHUB_ENV
+            
+            # ساخت لینک تلگرام
+            TG_LINK="tg://proxy?server=$TUNNEL_HOST&port=$TUNNEL_PORT&secret=ee${SECRET}"
+            echo "TG_LINK=$TG_LINK" >> $GITHUB_ENV
+            
+            echo "========================================="
+            echo "✅ پروکسی تلگرام آماده است!"
+            echo "📱 لینک اتصال:"
+            echo "$TG_LINK"
+            echo "========================================="
+            echo ""
+            echo "🔧 اطلاعات دستی:"
+            echo "Server: $TUNNEL_HOST"
+            echo "Port: $TUNNEL_PORT"
+            echo "Secret: ee${SECRET}"
+          else
+            echo "❌ خطا: نتوانستیم آدرس تونل را استخراج کنیم"
+            cat tunnel.log
+            exit 1
+          fi
 
       - name: Keep Alive
-        run: sleep 21600
+        run: |
+          echo "پروکسی فعال است. لینک اتصال:"
+          echo "${{ env.TG_LINK }}"
+          sleep 21600
