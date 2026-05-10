@@ -100,5 +100,5 @@ jobs:
         run: |
           echo "=========================================="
           echo "✅ دانلود کامل شد"
-          echo "📁 https://github.com/${{ github.repository }}/tree/main/mirrored-site"
+          echo "📁 https://github.com/${{ github.repository }}/tree/master/mirrored-site"
           echo "=========================================="
