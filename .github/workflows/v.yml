@@ -1,92 +1,98 @@
-name: Build V2Ray Config on Runner
+name: Deploy V2Ray on GitHub Runner
 
 on:
-  workflow_dispatch:  # فقط خودت دستی اجرا کن
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  setup-vpn-on-runner:
+  deploy-v2ray:
     runs-on: ubuntu-latest
     steps:
-      - name: دریافت IP Runner
+      - name: دریافت IP رانر
         id: get_ip
         run: |
           IP=$(curl -s https://api.ipify.org)
           echo "RUNNER_IP=$IP" >> $GITHUB_ENV
-          echo "IP Runner: $IP"
+          echo "IP: $IP"
 
-      - name: نصب Xray و پیکربندی خودکار
+      - name: نصب Xray و پیکربندی (بدون systemd)
         run: |
-          # نصب XrayCore با اسکریپت رسمی
+          # نصب Xray
           bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
           # ساخت UUID تصادفی
           UUID=$(cat /proc/sys/kernel/random/uuid)
-          echo "UUID: $UUID"
+          echo "XRAY_UUID=$UUID" >> $GITHUB_ENV
 
-          # پیکربندی فایل کانفیگ سرور (Xray)
-          cat > /usr/local/etc/xray/config.json << EOF
+          # ساخت فایل کانفیگ
+          sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
           {
-            "inbounds": [
+            \"inbounds\": [
               {
-                "port": 443,
-                "protocol": "vless",
-                "settings": {
-                  "clients": [
+                \"port\": 8080,
+                \"protocol\": \"vless\",
+                \"settings\": {
+                  \"clients\": [
                     {
-                      "id": "$UUID",
-                      "flow": "xtls-rprx-vision",
-                      "level": 0
+                      \"id\": \"$UUID\",
+                      \"flow\": \"xtls-rprx-vision\",
+                      \"level\": 0
                     }
                   ],
-                  "decryption": "none"
+                  \"decryption\": \"none\"
                 },
-                "streamSettings": {
-                  "network": "ws",
-                  "security": "none",
-                  "wsSettings": {
-                    "path": "/ray"
+                \"streamSettings\": {
+                  \"network\": \"ws\",
+                  \"security\": \"none\",
+                  \"wsSettings\": {
+                    \"path\": \"/ray\"
                   }
                 }
               }
             ],
-            "outbounds": [
+            \"outbounds\": [
               {
-                "protocol": "freedom",
-                "settings": {}
+                \"protocol\": \"freedom\",
+                \"settings\": {}
               }
             ]
           }
-          EOF
+          EOF"
 
-          # راه‌اندازی سرویس Xray
-          systemctl restart xray
-          systemctl enable xray
+          # نصب screen برای اجرا در پس‌زمینه
+          sudo apt-get update && sudo apt-get install -y screen
 
-          # ذخیره UUID در متغیر محیطی برای مرحله بعد
-          echo "XRAY_UUID=$UUID" >> $GITHUB_ENV
+          # اجرای Xray در screen (بدون systemd)
+          screen -dmS xray bash -c 'sudo /usr/local/bin/xray run -c /usr/local/etc/xray/config.json'
 
-      - name: تولید لینک V2RayNG
+      - name: تست و اطمینان از اجرا
         run: |
-          # ساخت لینک با فرمت VLESS
-          CONFIG_URL="vless://${{ env.XRAY_UUID }}@${{ env.RUNNER_IP }}:443?encryption=none&security=none&type=ws&path=%2Fray#VPS-GitHub-Actions"
+          sleep 3
+          if screen -list | grep -q "xray"; then
+            echo "✅ Xray با موفقیت اجرا شد"
+          else
+            echo "❌ خطا در اجرای Xray"
+            exit 1
+          fi
+
+      - name: ساخت لینک کانفیگ
+        run: |
+          CONFIG_URL="vless://${{ env.XRAY_UUID }}@${{ env.RUNNER_IP }}:8080?encryption=none&security=none&type=ws&path=%2Fray#GitHubActions-VPN"
           
-          echo "✅ کانفیگ شما آماده است:"
-          echo "$CONFIG_URL"
-          
-          # ذخیره در فایل
-          echo "آخرین بروزرسانی: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > v2ray-config.txt
-          echo "کانفیگ V2RayNG (کپی کرده و در اپ جایگذاری کن):" >> v2ray-config.txt
+          echo "✅ کانفیگ V2RayNG (کپی کنید):" > v2ray-config.txt
           echo "$CONFIG_URL" >> v2ray-config.txt
           echo "UUID: ${{ env.XRAY_UUID }}" >> v2ray-config.txt
-          echo "Server IP: ${{ env.RUNNER_IP }}" >> v2ray-config.txt
+          echo "IP: ${{ env.RUNNER_IP }}" >> v2ray-config.txt
+          echo "پورت: 8080" >> v2ray-config.txt
+          
+          cat v2ray-config.txt
 
-      - name: ذخیره خودکار در مخزن
+      - name: ذخیره در مخزن
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add v2ray-config.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "update v2ray config for ip ${{ env.RUNNER_IP }}"
+          git diff --quiet && git diff --staged --quiet || git commit -m "add v2ray config for ip ${{ env.RUNNER_IP }}"
           git push
