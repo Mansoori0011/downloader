@@ -104,7 +104,7 @@ jobs:
           echo "=========================================="
           echo "✅ دانلود انجام شد"
           echo "📦 فایل ZIP:"
-          echo "https://github.com/${{ github.repository }}/blob/main/website_content.zip"
+          echo "https://github.com/${{ github.repository }}/blob/master/website_content.zip"
           echo ""
           echo "⚠️ توجه: برای این نوع سایت‌ها:"
           echo "- عکس‌ها معمولاً دانلود می‌شن"
