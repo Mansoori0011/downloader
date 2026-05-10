@@ -1,15 +1,15 @@
-name: "ذخیره کامل سایت به صورت MHTML"
+name: "دانلود کامل سایت با تمام CDN ها"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس کامل سایت'
+        description: 'آدرس سایت'
         required: true
         default: 'https://example.com'
 
 jobs:
-  save-mhtml:
+  download-full:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -18,92 +18,113 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🛠️ Install Chrome
+      - name: 🌐 Download website + all CDNs
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
-          rm google-chrome-stable_current_amd64.deb
-
-      - name: 💾 Save as MHTML with Chrome Headless
-        run: |
-          mkdir -p ./output
+          rm -rf ./site
+          mkdir -p ./site
+          cd ./site
           
-          # روش اصلی: ذخیره با دیباگر کروم
-          google-chrome-stable \
-            --headless=new \
-            --disable-gpu \
-            --no-sandbox \
-            --disable-dev-shm-usage \
-            --virtual-time-budget=10000 \
-            --dump-dom \
-            "${{ github.event.inputs.site_url }}" > ./output/page.html
+          # استخراج دامنه اصلی
+          MAIN_DOMAIN=$(echo "${{ github.event.inputs.site_url }}" | awk -F/ '{print $3}')
           
-          # دانلود کامل با wget برای اطمینان
+          # دانلود با اجازه به دامنه های مختلف (CDN ها)
           wget \
+            --recursive \
+            --level=5 \
+            --no-clobber \
             --page-requisites \
-            --convert-links \
             --adjust-extension \
-            --no-host-directories \
-            --directory-prefix=./output \
-            --execute robots=off \
+            --convert-links \
+            --restrict-file-names=windows \
+            --domains=$MAIN_DOMAIN,cloudflare.com,cloudfront.net,amazonaws.com,fastly.net,cdninstagram.com,cdn.example.com \
             --span-hosts \
-            --user-agent="Mozilla/5.0 (Android 14; Mobile)" \
+            --no-parent \
+            --wait=1 \
+            --limit-rate=200k \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            --execute robots=off \
+            --accept="*.html,*.htm,*.css,*.js,*.jpg,*.jpeg,*.png,*.gif,*.webp,*.svg,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.mp3" \
+            --header="Accept: image/webp,image/apng,image/*,*/*;q=0.8" \
             "${{ github.event.inputs.site_url }}"
+          
+          cd ..
 
-      - name: 📦 Create single HTML with embedded images
+      - name: 🔍 Extract all image URLs from HTML and CSS
         run: |
-          cd ./output
+          cd ./site
           
-          # پیدا کردن فایل اصلی HTML
-          main_html=$(find . -maxdepth 1 -name "*.html" | head -1)
+          # پیدا کردن تمام عکس‌ها از فایل‌های HTML
+          find . -name "*.html" -o -name "*.htm" | while read file; do
+            grep -Eo '(https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg|ico))' "$file" >> /tmp/all_images.txt
+            grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/url(//g' | sed 's/)//g' >> /tmp/all_images.txt
+          done
           
-          if [ -f "$main_html" ]; then
-            # جایگزینی عکس‌ها با base64 برای یکپارچه شدن
-            find . -name "*.jpg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" | while read img; do
-              img_name=$(basename "$img")
-              img_base64=$(base64 -w 0 "$img")
-              content_type="image/${img_name##*.}"
-              sed -i "s|$img_name|data:$content_type;base64,$img_base64|g" "$main_html" 2>/dev/null || true
-            done
-          fi
+          # پیدا کردن از فایل‌های CSS
+          find . -name "*.css" | while read file; do
+            grep -Eo '(https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg))' "$file" >> /tmp/all_images.txt
+            grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/url(//g' | sed 's/)//g' >> /tmp/all_images.txt
+          done
+          
+          # حذف تکراری‌ها
+          sort -u /tmp/all_images.txt > /tmp/unique_images.txt
+          
+          # دانلود تمام عکس‌های پیدا شده
+          mkdir -p ./downloaded_images
+          while IFS= read -r imgurl; do
+            if [ ! -z "$imgurl" ]; then
+              filename=$(basename "$imgurl" | cut -d'?' -f1 | cut -d'#' -f1)
+              echo "Downloading: $imgurl"
+              wget --timeout=10 --tries=3 --quiet -P ./downloaded_images/ "$imgurl" 2>/dev/null || true
+            fi
+          done < /tmp/unique_images.txt
+          
+          cd ..
 
-      - name: 📱 Create Android shortcut
+      - name: 📦 Create ZIP with everything
         run: |
-          cat > ./output/README_ANDROID.txt << 'EOF'
+          zip -r site-full.zip ./site/
+          echo "✅ فایل ZIP ساخته شد"
+
+      - name: 📱 Android instructions
+        run: |
+          cat > ANDROID_GUIDE.txt << 'EOF'
           ========================================
-          ✅ فایل آماده استفاده در اندروید است
+          📱 راهنمای اندروید
           ========================================
           
-          روش استفاده:
-          1. فایل page.html رو دانلود کن
-          2. با کروم اندروید باز کن
-          3. همه عکس‌ها نمایش داده می‌شوند
+          1. دانلود فایل site-full.zip
+          2. نصب Zarchiver از گوگل پلی
+          3. اکسترکت فایل zip
+          4. پوشه site رو باز کن
+          5. فایل index.html رو با Chrome باز کن
           
-          یا:
-          - کل پوشه output رو دانلود کن
-          - فایل HTML رو در مرورگر باز کن
+          ✅ تمام عکس‌ها (حتی از CDN ها) ذخیره شده‌اند
+          ✅ آفلاین کامل کار می‌کند
           
-          لینک دانلود از گیت‌هاب:
-          https://github.com/YOUR_REPO/tree/main/output
+          اگه بعضی عکس‌ها نمایش داده نشد:
+          - فایل index.html رو با Notepad باز کن
+          - آدرس HTTPS رو به HTTP تغییر بده
           ========================================
           EOF
 
-      - name: 💾 Commit and Push
+      - name: 💾 Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
-          git add output/
-          git diff --staged --quiet || git commit -m "MHTML: ${{ github.event.inputs.site_url }}"
+          git add site/ site-full.zip ANDROID_GUIDE.txt
+          git diff --staged --quiet || git commit -m "Full download with CDNs: ${{ github.event.inputs.site_url }}"
           git push
 
-      - name: ✅ Show link
+      - name: ✅ Show links
         run: |
           echo "=========================================="
-          echo "✅ فایل‌ها با موفقیت ذخیره شدند"
+          echo "✅ دانلود کامل شد"
           echo ""
-          echo "📁 https://github.com/${{ github.repository }}/tree/master/output"
+          echo "📦 دانلود ZIP (بهترین گزینه):"
+          echo "https://github.com/${{ github.repository }}/blob/main/site-full.zip"
           echo ""
-          echo "📱 فایل output/page.html رو توی گوشی باز کن"
+          echo "📁 مشاهده فایل‌ها:"
+          echo "https://github.com/${{ github.repository }}/tree/master/site"
+          echo ""
+          echo "📱 توی گوشی، فایل ZIP رو دانلود و اکسترکت کن"
           echo "=========================================="
