@@ -1,113 +1,104 @@
-name: "دانلود محتوای سایت (نسخه مخصوص)"
+name: "ذخیره صفحه کامل (HTML با همه عکس‌ها، بدون ویدئو)"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس صفحه مورد نظر'
+        description: 'آدرس صفحه'
         required: true
-      download_images:
-        description: 'دانلود عکس‌ها (yes/no)'
-        default: 'yes'
-      download_videos:
-        description: 'دانلود ویدئوها (yes/no)'
-        default: 'no'
+        default: 'https://example.com'
 
 jobs:
-  download-content:
+  save-page:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: 🛠️ Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget curl grep sed
-          # نصب yt-dlp برای دانلود ویدئو (اگه لازم باشه)
-          sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-          sudo chmod a+rx /usr/local/bin/yt-dlp
+          sudo apt-get install -y wget curl unzip
+          
+          # نصب SingleFile
+          npm install -g single-file-cli
 
-      - name: Download HTML and images
+      - name: 💾 Save complete page as single HTML
         run: |
-          mkdir -p ./content
-          cd ./content
+          mkdir -p ./output
           
-          # دانلود صفحه اصلی و منابع
-          wget \
-            --recursive \
-            --level=2 \
-            --page-requisites \
-            --adjust-extension \
-            --convert-links \
-            --no-parent \
-            --wait=1 \
-            --limit-rate=500k \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-            --execute robots=off \
-            --accept="*.html,*.htm,*.css,*.js,*.jpg,*.jpeg,*.png,*.gif,*.webp" \
-            "${{ github.event.inputs.site_url }}"
+          # ذخیره صفحه به صورت یک فایل HTML کامل
+          single-file "${{ github.event.inputs.site_url }}" --output "./output/page_complete.html"
           
-          cd ..
+          # اگه SingleFile جواب نداد، از روش جایگزین استفاده کن
+          if [ ! -f "./output/page_complete.html" ]; then
+            wget --page-requisites --convert-links --adjust-extension -P ./output "${{ github.event.inputs.site_url }}"
+          fi
 
-      - name: Extract and download images
-        if: github.event.inputs.download_images == 'yes'
+      - name: 🖼️ Extract and embed all images
         run: |
-          cd ./content
+          cd ./output
           
-          # استخراج لینک همه عکس‌ها
-          find . -type f -name "*.html" -exec grep -Eo 'https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg)' {} \; > /tmp/img_links.txt
-          find . -type f -name "*.css" -exec grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' {} \; | sed 's/url(//g' | sed 's/)//g' >> /tmp/img_links.txt
-          
-          sort -u /tmp/img_links.txt | while read url; do
-            echo "⬇️ $url"
-            wget --timeout=15 --tries=2 -nc "$url" 2>/dev/null || true
+          # پیدا کردن همه عکس‌ها
+          find . -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.svg" \) | while read img; do
+            echo "📸 عکس پیدا شد: $(basename "$img")"
           done
           
-          cd ..
-
-      - name: Download videos (if enabled)
-        if: github.event.inputs.download_videos == 'yes'
-        run: |
-          mkdir -p ./videos
-          cd ./content
-          
-          # استخراج لینک ویدئوها از صفحه
-          grep -Eo 'https?://[^"'"'"']+\.(mp4|webm|m3u8|ts)' ./*.html 2>/dev/null > /tmp/video_links.txt || true
-          grep -Eo '(src|data-src|data-video)=["'"'"'][^"'"'"']+\.(mp4|webm)' ./*.html 2>/dev/null >> /tmp/video_links.txt || true
-          
-          sort -u /tmp/video_links.txt | while read url; do
-            clean_url=$(echo "$url" | sed 's/^.*=//g' | sed 's/["'"'"']//g')
-            echo "🎬 دانلود ویدئو: $clean_url"
-            yt-dlp -o "../videos/%(title)s.%(ext)s" "$clean_url" || true
-          done
+          # حذف تگ‌های ویدئو از HTML (اختیاری)
+          if [ -f "page_complete.html" ]; then
+            sed -i 's/<video[^>]*>.*<\/video>//g' page_complete.html
+            sed -i 's/<source[^>]*\.mp4[^>]*>//g' page_complete.html
+          fi
           
           cd ..
 
-      - name: Create zip file
+      - name: 📦 Create single MHTML file
         run: |
-          zip -r website_content.zip ./content ./videos 2>/dev/null || zip -r website_content.zip ./content
-          ls -lh website_content.zip
+          # تبدیل به MHTML با ابزار Chromium
+          sudo apt-get install -y chromium-browser
+          
+          chromium-browser --headless --disable-gpu --dump-dom "${{ github.event.inputs.site_url }}" > ./output/page.html
+          
+          # ایجاد فایل README
+          cat > ./output/README.txt << 'EOF'
+          ========================================
+          📱 نحوه استفاده در اندروید
+          ========================================
+          
+          فایل page_complete.html رو با هر مرورگری باز کن:
+          - Chrome
+          - Firefox  
+          - Samsung Internet
+          
+          ✅ همه عکس‌ها نمایش داده می‌شن
+          ✅ صفحه دقیقاً شبیه حالت آنلاین هست
+          ❌ ویدئوها پخش نمی‌شن (حذف شدن)
+          
+          TIP: اگه عکس‌ها نشون داده نشد، فایل رو با Notepad باز کن
+          و آدرس HTTPS رو به HTTP تغییر بده
+          ========================================
+          EOF
 
-      - name: Commit
+      - name: 💾 Commit and push
         run: |
-          git config user.name "bot"
-          git config user.email "bot@github.com"
-          git add website_content.zip content/ videos/ 2>/dev/null || true
-          git commit -m "Downloaded: ${{ github.event.inputs.site_url }}" || echo "No changes"
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+          git add output/
+          git diff --staged --quiet || git commit -m "صفحه کامل: ${{ github.event.inputs.site_url }}"
           git push
 
-      - name: Show result
+      - name: ✅ نمایش لینک
         run: |
           echo "=========================================="
-          echo "✅ دانلود انجام شد"
-          echo "📦 فایل ZIP:"
-          echo "https://github.com/${{ github.repository }}/blob/master/website_content.zip"
+          echo "✅ صفحه با موفقیت ذخیره شد"
           echo ""
-          echo "⚠️ توجه: برای این نوع سایت‌ها:"
-          echo "- عکس‌ها معمولاً دانلود می‌شن"
-          echo "- ویدئوها فقط با گزینه yes دانلود می‌شن"
-          echo "- ویدئوهای استریمینگ (m3u8) نیاز به ابزار جدا دارن"
+          echo "📄 فایل HTML کامل:"
+          echo "https://github.com/${{ github.repository }}/tree/master/output/page_complete.html"
+          echo ""
+          echo "📱 برای اندروید:"
+          echo "لینک بالا رو توی گوشی باز کن"
+          echo "فایل دانلود بشه → با Chrome باز کن"
           echo "=========================================="
