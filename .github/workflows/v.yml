@@ -1,16 +1,16 @@
-name: “دانلود کامل سایت با تمام منابع”
+name: "دانلود کامل سایت با تمام منابع"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: ‘آدرس کامل سایت (با http:// یا https://)’
+        description: 'آدرس کامل سایت (با http:// یا https://)'
         required: true
-        default: ‘https://example.com’
+        default: 'https://example.com'
       max_depth:
-        description: ‘عمق لینک‌های دنبال شود (۱ تا ۵)’
+        description: 'عمق لینک‌های دنبال شود (۱ تا ۵)'
         required: true
-        default: ‘2’
+        default: '2'
 
 jobs:
   mirror-site:
@@ -24,14 +24,9 @@ jobs:
 
       - name: 🌐 Mirror entire website with wget
         run: |
-          # نصب wget
           sudo apt-get update
           sudo apt-get install -y wget
-
-          # پاک کردن پوشه قبلی
           rm -rf ./mirrored-site
-
-          # دانلود کامل سایت (عکس، CSS، JS، فونت و...)
           wget \
             --mirror \
             --convert-links \
@@ -43,40 +38,23 @@ jobs:
             --directory-prefix=./mirrored-site \
             --execute robots=off \
             --user-agent="Mozilla/5.0 (Android 14; Mobile) AppleWebKit/537.36" \
-            -e "https_proxy=${{ secrets.HTTPS_PROXY }}" \
             "${{ github.event.inputs.site_url }}"
-
-          # بازسازی ساختار پوشه
-          find ./mirrored-site -type f -name "*.html" -exec sh -c '
-            for file; do
-              mv "$file" "${file%.html}.html"
-            done
-          ' sh {} +
 
       - name: 📱 Create Android shortcut file
         run: |
-          # ساخت فایل راهنما برای اندروید
           cat > ./mirrored-site/ANDROID_README.md << 'EOF'
 # 📱 نحوه مشاهده این سایت در اندروید
 
 ## روش اول (ساده) 🟢
-فایل اصلی سایت رو با مرورگر گوشی باز کن:
-`index.html` یا نام فایل اصلی که دانلود شده
+فایل اصلی سایت رو با مرورگر گوشی باز کن
 
 ## روش دوم (آفلاین کامل) 🔵
-1. کل پوشه `mirrored-site` رو دانلود کن:
-   - برو به مخزن گیت‌هاب
-   - دکمه `<> Code` → `Download ZIP`
-2. فایل ZIP رو از حالت فشرده خارج کن
-3. داخل پوشه، فایل `index.html` رو باز کن
+1. کل پوشه mirrored-site رو دانلود کن
+2. دکمه Code → Download ZIP
+3. فایل ZIP رو از حالت فشرده خارج کن
+4. داخل پوشه، فایل index.html رو باز کن
 
-## ساختار فایل‌ها
-- 📄 HTML: تمام صفحات
-- 🖼️ Images: عکس‌ها در پوشه‌های `images/` یا `img/`
-- 🎨 CSS: فایل‌های استایل
-- ⚙️ JS: اسکریپت‌ها
-
-✅ تمام منابع محلی ذخیره شده‌اند (اینترنت نیاز نیست بعد از دانلود)
+✅ تمام منابع محلی ذخیره شده‌اند
 EOF
 
       - name: 💾 Commit and Push
@@ -84,19 +62,14 @@ EOF
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
           git add mirrored-site/
-          git diff --staged --quiet || git commit -m "📦 Mirror کامل: ${{ github.event.inputs.site_url }} - $(date '+%Y-%m-%d %H:%M')"
+          git diff --staged --quiet || git commit -m "Mirror کامل: ${{ github.event.inputs.site_url }}"
           git push
 
       - name: ✅ نمایش لینک دسترسی
         run: |
           echo "=========================================="
-          echo "✅ سایت با موفقیت دانلود شد!"
+          echo "✅ سایت با موفقیت دانلود شد"
           echo ""
-          echo "🔗 لینک دسترسی مستقم:"
+          echo "🔗 لینک دسترسی:"
           echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
-          echo ""
-          echo "📱 روی گوشی:"
-          echo "1. لینک بالا رو باز کن"
-          echo "2. فایل index.html رو پیدا کن"
-          echo "3. روش Raw یا Download رو بزن تا تو مرورگر گوشی باز بشه"
           echo "=========================================="
