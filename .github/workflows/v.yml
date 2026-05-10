@@ -1,29 +1,38 @@
-name: Get Runner IP
+name: Save Runner IP to Repo
 
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:  # اجازه اجرای دستی
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'  # هر 30 دقیقه یکبار (اختیاری)
+
+permissions:
+  contents: write  # اجازه نوشتن در مخزن
 
 jobs:
-  get_runner_ip:
+  save-runner-ip:
     runs-on: ubuntu-latest
-    outputs:
-      runner_ip: ${{ steps.get_ip.outputs.ipv4 }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: دریافت IP عمومی رانر
         id: get_ip
         run: |
           IP=$(curl -s https://api.ipify.org)
-          echo "IPv4: $IP"
-          echo "ipv4=$IP" >> $GITHUB_OUTPUT
+          echo "RUNNER_IP=$IP" >> $GITHUB_ENV
+          echo "IP دریافت شد: $IP"
 
-  use_ip_example:
-    needs: get_runner_ip
-    runs-on: ubuntu-latest
-    steps:
-      - name: استفاده از IP ذخیره شده
+      - name: ذخیره IP در فایل
         run: |
-          echo "آی پی رانر: ${{ needs.get_runner_ip.outputs.runner_ip }}"
-          # مثال: دستور مورد نظرتان با IP
-          # curl -H "X-Forwarded-For: ${{ needs.get_runner_ip.outputs.runner_ip }}" https://api.example.com
+          echo "آخرین بروزرسانی: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > runner-ip.txt
+          echo "IP رانر: ${{ env.RUNNER_IP }}" >> runner-ip.txt
+
+      - name: Commit و Push فایل به مخزن
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add runner-ip.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "update runner ip: ${{ env.RUNNER_IP }}"
+          git push
