@@ -1,60 +1,43 @@
-name: “دانلود کامل سایت - نسخه سریع”
+name: "دانلود کامل سایت (بدون Checkout)"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: ‘آدرس کامل سایت’
+        description: 'آدرس کامل سایت'
         required: true
-        default: ‘https://example.com’
+        default: 'https://example.com'
 
 jobs:
-  mirror-site:
+  download-site:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      # 🚀 کلید سرعت: فقط آخرین commit رو میاره (depth: 1)
-      - name: 📥 Fast checkout (without history)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          persist-credentials: true
+      # ❌ هیچ Checkout ای اینجا نیست
+      
+      - name: نصب wget
+        run: sudo apt-get update && sudo apt-get install -y wget
 
-      - name: 🌐 Download full website
+      - name: دانلود کامل سایت
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-
-          rm -rf ./site-mirror
-          
-          # دانلود با حداکثر سرعت (بدون محدودیت)
           wget \
             --mirror \
             --convert-links \
             --adjust-extension \
             --page-requisites \
             --no-parent \
-            --wait=0 \
-            --timeout=10 \
-            --tries=3 \
-            --directory-prefix=./site-mirror \
+            --wait=2 \
+            --directory-prefix=./sitemirror \
             --execute robots=off \
-            --user-agent="Mozilla/5.0 (Android 14; Mobile) Safari/537.36" \
+            --user-agent="Mozilla/5.0 (Android 14; Mobile) AppleWebKit/537.36" \
             "${{ github.event.inputs.site_url }}"
 
-      - name: 💾 Quick push
+      - name: فشرده‌سازی فایل‌ها
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git add site-mirror/
-          git diff --staged --quiet || git commit -m "✅ سایت دانلود شد: $(date '+%H:%M:%S')"
-          git push
+          zip -r site-mirror.zip ./sitemirror
 
-      - name: 📱 لینک نهایی
-        run: |
-          echo "=========================================="
-          echo "✅ انجام شد! لینک:"
-          echo "https://github.com/${{ github.repository }}/tree/main/site-mirror"
-          echo "=========================================="
+      - name: آپلود به عنوان Artifact (بدون commit!)
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-mirror
+          path: site-mirror.zip
+          retention-days: 7
