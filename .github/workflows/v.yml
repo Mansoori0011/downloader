@@ -1,16 +1,12 @@
-name: "دانلود کامل سایت با تمام منابع"
+name: "دانلود کامل سایت با تمام عکس‌ها"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس کامل سایت (با http:// یا https://)'
+        description: 'آدرس کامل سایت'
         required: true
         default: 'https://example.com'
-      max_depth:
-        description: 'عمق لینک‌های دنبال شود (۱ تا ۵)'
-        required: true
-        default: '2'
 
 jobs:
   mirror-site:
@@ -22,48 +18,65 @@ jobs:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🌐 Mirror entire website with wget
+      - name: 🛠️ Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget
-          rm -rf ./mirrored-site
-          wget \
-            --mirror \
-            --convert-links \
-            --adjust-extension \
-            --page-requisites \
-            --no-parent \
-            --wait=2 \
-            --limit-rate=100k \
-            --directory-prefix=./mirrored-site \
-            --execute robots=off \
-            --user-agent="Mozilla/5.0 (Android 14; Mobile) AppleWebKit/537.36" \
-            "${{ github.event.inputs.site_url }}"
+          sudo apt-get install -y wget httrack
 
-      - name: 📱 Create Android shortcut file
+      - name: 🌐 Download complete website with HTTrack
         run: |
-          echo "# نحوه مشاهده این سایت در اندروید" > ./mirrored-site/ANDROID_README.md
-          echo "" >> ./mirrored-site/ANDROID_README.md
-          echo "روش اول: فایل index.html رو با مرورگر گوشی باز کن" >> ./mirrored-site/ANDROID_README.md
-          echo "" >> ./mirrored-site/ANDROID_README.md
-          echo "روش دوم برای آفلاین:" >> ./mirrored-site/ANDROID_README.md
-          echo "1. دکمه Code -> Download ZIP" >> ./mirrored-site/ANDROID_README.md
-          echo "2. فایل رو از حالت فشرده خارج کن" >> ./mirrored-site/ANDROID_README.md
-          echo "3. index.html رو باز کن" >> ./mirrored-site/ANDROID_README.md
+          rm -rf ./mirrored-site
+          mkdir -p ./mirrored-site
+          
+          httrack "${{ github.event.inputs.site_url }}" \
+            -O ./mirrored-site \
+            --mirror \
+            --robots=0 \
+            --depth=3 \
+            --ext-depth=3 \
+            --keep-alive \
+            --user-agent="Mozilla/5.0 (Android 14; Mobile) Safari/537.36" \
+            --connection-patch="Accept-Encoding:gzip" \
+            "+*$(echo "${{ github.event.inputs.site_url }}" | awk -F/ '{print $3}')*" \
+            "-*.jpg?*" \
+            "-*.png?*" \
+            "-*.gif?*" \
+            "-*.css?*" \
+            "-*.js?*"
+
+      - name: 🔍 Extract all image URLs from HTML
+        run: |
+          cd ./mirrored-site
+          find . -name "*.html" -o -name "*.htm" | while read htmlfile; do
+            grep -Eo '(https?://[^"]+\.(jpg|jpeg|png|gif|webp|svg|bmp|ico))' "$htmlfile" >> /tmp/all_images.txt || true
+            grep -Eo 'url\(([^)]+)\)' "$htmlfile" | sed 's/url(//g' | sed 's/)//g' >> /tmp/all_images_css.txt || true
+          done
+          
+          sort -u /tmp/all_images.txt /tmp/all_images_css.txt > /tmp/final_images.txt || true
+
+      - name: 📸 Download all missing images
+        run: |
+          mkdir -p ./mirrored-site/all_images
+          cd ./mirrored-site
+          
+          while IFS= read -r imgurl; do
+            if [ ! -z "$imgurl" ]; then
+              filename=$(basename "$imgurl" | cut -d'?' -f1)
+              wget --timeout=10 --tries=2 --quiet "$imgurl" -O "all_images/$filename" || true
+            fi
+          done < /tmp/final_images.txt
 
       - name: 💾 Commit and Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
           git add mirrored-site/
-          git diff --staged --quiet || git commit -m "Mirror کامل: ${{ github.event.inputs.site_url }}"
+          git diff --staged --quiet || git commit -m "کامل: ${{ github.event.inputs.site_url }} با تمام عکس‌ها"
           git push
 
-      - name: ✅ نمایش لینک دسترسی
+      - name: ✅ نمایش لینک
         run: |
           echo "=========================================="
-          echo "✅ سایت با موفقیت دانلود شد"
-          echo ""
-          echo "🔗 لینک دسترسی:"
-          echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
+          echo "✅ سایت و تمام عکس‌ها دانلود شد"
+          echo "🔗 https://github.com/${{ github.repository }}/tree/master/mirrored-site"
           echo "=========================================="
