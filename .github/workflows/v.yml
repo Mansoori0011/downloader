@@ -1,104 +1,46 @@
-name: "دانلود کامل سایت با تمام عکس‌ها"
+name: "SingleFile - ذخیره کامل سایت در یک فایل"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس کامل سایت'
+        description: 'آدرس سایت'
         required: true
-        default: 'https://example.com'
 
 jobs:
-  mirror-site:
+  singlefile:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: 📥 Checkout repository
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🛠️ Install wget
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-      - name: 🌐 Download website with wget
+      - name: 📦 Install SingleFile
         run: |
-          rm -rf ./mirrored-site
-          mkdir -p ./mirrored-site
-          
-          wget \
-            --recursive \
-            --level=inf \
-            --convert-links \
-            --adjust-extension \
-            --page-requisites \
-            --span-hosts \
-            --domains=$(echo "${{ github.event.inputs.site_url }}" | awk -F/ '{print $3}') \
-            --no-parent \
-            --wait=1 \
-            --limit-rate=200k \
-            --directory-prefix=./mirrored-site \
-            --execute robots=off \
-            --user-agent="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36" \
-            --accept="*.html,*.htm,*.css,*.js,*.jpg,*.jpeg,*.png,*.gif,*.webp,*.svg,*.ico,*.woff,*.woff2,*.ttf" \
-            "${{ github.event.inputs.site_url }}"
+          pip install singlefile
+          playwright install chromium
 
-      - name: 📸 Download background images from CSS
+      - name: 💾 Save as SingleFile HTML
         run: |
-          cd ./mirrored-site
-          
-          # پیدا کردن تمام فایل‌های CSS
-          find . -name "*.css" | while read cssfile; do
-            # استخراج آدرس عکس‌ها از background-image
-            grep -Eo 'url\(["]?[^")]+\.(jpg|jpeg|png|gif|webp|svg|ico)["]?' "$cssfile" | \
-            sed 's/url(//g' | sed 's/)//g' | sed 's/"//g' | \
-            while read imgurl; do
-              if [[ ! "$imgurl" =~ ^http ]]; then
-                # تبدیل آدرس نسبی به کامل
-                baseurl=$(dirname "$cssfile")
-                imgurl="$baseurl/$imgurl"
-              fi
-              echo "$imgurl" >> /tmp/all_images.txt
-            done
-          done
-          
-          # دانلود عکس‌های پیدا شده
-          sort -u /tmp/all_images.txt | while read imgurl; do
-            if [ ! -z "$imgurl" ]; then
-              echo "Downloading: $imgurl"
-              wget --timeout=10 --tries=2 --quiet -P ./ "$imgurl" || true
-            fi
-          done
+          mkdir -p ./output
+          singlefile "${{ github.event.inputs.site_url }}" --output="./output/site_complete.html"
+          echo "✅ فایل ذخیره شد" >> ./output/info.txt
 
-      - name: 📝 Create Android guide
+      - name: 📱 Add Android guide
         run: |
-          cat > ./mirrored-site/README_ANDROID.txt << 'EOF'
-          ========================================
-          نحوه مشاهده در اندروید
-          ========================================
-          
-          1. دانلود ZIP از گیتهاب (Code -> Download ZIP)
-          2. نصب Zarchiver از گوگل پلی
-          3. اکسترکت فایل ZIP با Zarchiver
-          4. باز کردن index.html در مرورگر
-          
-          تمام عکس‌ها باید نمایش داده شوند
-          ========================================
-          EOF
+          echo "📱 فایل site_complete.html رو توی مرورگر گوشی باز کن" > ./output/README.txt
 
-      - name: 💾 Commit and Push
+      - name: 💾 Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
-          git add mirrored-site/
-          git diff --staged --quiet || git commit -m "دانلود کامل: ${{ github.event.inputs.site_url }}"
+          git add output/
+          git commit -m "SingleFile: ${{ github.event.inputs.site_url }}" || echo "تغییری نیست"
           git push
-
-      - name: ✅ Show link
-        run: |
-          echo "=========================================="
-          echo "✅ دانلود کامل شد"
-          echo "📁 https://github.com/${{ github.repository }}/tree/master/mirrored-site"
-          echo "=========================================="
