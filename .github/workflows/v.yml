@@ -1,25 +1,29 @@
-stages:
-  - get_ip
-  - use_ip  # مرحله مثال برای استفاده از IP
+name: Get Runner IP
 
-# دریافت IP عمومی رانر
-get_runner_ip:
-  stage: get_ip
-  script:
-    # دریافت IPv4 (استفاده از ipify.org)
-    - export CI_RUNNER_IP=$(curl -s https://api.ipify.org)
-    - echo "آی پی عمومی رانر: $CI_RUNNER_IP"
-  artifacts:
-    reports:
-      dotenv: runnet_ip.env  # خروجی به صورت متغیر محیطی ذخیره می‌شود
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # اجازه اجرای دستی
 
-# مثال: استفاده از IP در مرحله بعد
-use_ip_example:
-  stage: use_ip
-  needs: ["get_runner_ip"]  # صبر می‌کند مرحله قبل تمام شود
-  script:
-    - echo "آی پی ذخیره شده: $CI_RUNNER_IP"
-    # مثال: قرار دادن در فایروال
-    # - aws ec2 authorize-security-group-ingress --cidr $CI_RUNNER_IP/32
-  dependencies:
-    - get_runner_ip
+jobs:
+  get_runner_ip:
+    runs-on: ubuntu-latest
+    outputs:
+      runner_ip: ${{ steps.get_ip.outputs.ipv4 }}
+    steps:
+      - name: دریافت IP عمومی رانر
+        id: get_ip
+        run: |
+          IP=$(curl -s https://api.ipify.org)
+          echo "IPv4: $IP"
+          echo "ipv4=$IP" >> $GITHUB_OUTPUT
+
+  use_ip_example:
+    needs: get_runner_ip
+    runs-on: ubuntu-latest
+    steps:
+      - name: استفاده از IP ذخیره شده
+        run: |
+          echo "آی پی رانر: ${{ needs.get_runner_ip.outputs.runner_ip }}"
+          # مثال: دستور مورد نظرتان با IP
+          # curl -H "X-Forwarded-For: ${{ needs.get_runner_ip.outputs.runner_ip }}" https://api.example.com
