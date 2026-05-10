@@ -1,10 +1,10 @@
-name: "ذخیره صفحه به صورت MHTML با کروم"
+name: "ذخیره صفحه به صورت MHTML با Puppeteer"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس صفحه مورد نظر (مثل سایتی که گفتی)'
+        description: 'آدرس صفحه مورد نظر'
         required: true
         default: 'https://example.com'
 
@@ -15,115 +15,118 @@ jobs:
       contents: write
 
     steps:
-      - name: 📥 دریافت کدهای مخزن
+      - name: 📥 دریافت کدها
         uses: actions/checkout@v4
 
-      - name: 🐍 نصب پایتون
-        uses: actions/setup-python@v5
+      - name: 📦 نصب Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.10'
+          node-version: '20'
 
-      - name: 📦 نصب کتابخانه‌های مورد نیاز برای کنترل کروم
+      - name: 📦 نصب Puppeteer
         run: |
-          pip install selenium webdriver-manager
+          npm install puppeteer
+          npx puppeteer browsers install chrome
 
-      - name: 🌐 نصب و آماده‌سازی گوگل کروم
+      - name: 📸 ذخیره صفحه به عنوان MHTML
         run: |
-          # نصب کروم
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y -qq
-          rm google-chrome-stable_current_amd64.deb
-          
-          # نصب ChromeDriver برای کنترل کروم
-          sudo apt-get install -y unzip xvfb libxi6 libgconf-2-4
-          wget -q https://storage.googleapis.com/chrome-for-testing-public/latest/linux64/chromedriver-linux64.zip
-          unzip chromedriver-linux64.zip
-          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
-          sudo chmod +x /usr/local/bin/chromedriver
+          node - << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
 
-      - name: 📸 ذخیره صفحه به عنوان MHTML با استفاده از اسکریپت پایتون
-        run: |
-          python3 - << EOF
-          import time
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-
-          # تنظیمات مرورگر کروم در حالت بی‌سر (بدون نمایش)
-          chrome_options = Options()
-          chrome_options.add_argument('--headless=new') # حالت بی‌سر جدید
-          chrome_options.add_argument('--no-sandbox')
-          chrome_options.add_argument('--disable-dev-shm-usage')
-          chrome_options.add_argument('--disable-gpu')
-          chrome_options.add_argument('--remote-debugging-port=9222')
-
-          print("🚀 در حال راه‌اندازی مرورگر کروم...")
-          driver = webdriver.Chrome(options=chrome_options)
-
-          site_url = "${{ github.event.inputs.site_url }}"
-          print(f"🌐 در حال بارگذاری صفحه: {site_url}")
-          driver.get(site_url)
-
-          # صبر می‌کنیم تا صفحه و عکس‌های تامبنیل کاملاً لود بشن (مخصوص سایت شما)
-          print("⏳ در حال منتظر ماندن برای لود کامل عکس‌ها (چند ثانیه)...")
-          time.sleep(15) # افزایش زمان برای لود تامبنیل‌ها با JS
-
-          print("📄 در حال گرفتن خروجی MHTML...")
-          # این دستور جادویی کار ذخیره MHTML رو انجام میده
-          mhtml_data = driver.execute_cdp_cmd('Page.captureSnapshot', {})
-
-          # ذخیره خروجی در فایل
-          output_file = 'page_complete.mhtml'
-          with open(output_file, 'w', encoding='utf-8') as f:
-              f.write(mhtml_data['data'])
-
-          print(f"✅ فایل با موفقیت ذخیره شد: {output_file} (حجم: {len(mhtml_data['data']) / 1024:.2f} KB)")
-          driver.quit()
+          (async () => {
+            console.log('🚀 در حال راه‌اندازی مرورگر کروم...');
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+              ]
+            });
+            
+            const page = await browser.newPage();
+            
+            const siteUrl = '${{ github.event.inputs.site_url }}';
+            console.log(`🌐 در حال بارگذاری صفحه: ${siteUrl}`);
+            
+            await page.goto(siteUrl, { 
+              waitUntil: 'networkidle2',
+              timeout: 60000 
+            });
+            
+            // منتظر میمونیم تا عکس‌های تامبنیل لود بشن
+            console.log('⏳ منتظر لود کامل عکس‌ها (15 ثانیه)...');
+            await page.waitForTimeout(15000);
+            
+            // اسکرول به پایین برای لود عکس‌های بیشتر
+            await page.evaluate(async () => {
+              window.scrollTo(0, document.body.scrollHeight);
+            });
+            await page.waitForTimeout(3000);
+            
+            console.log('📄 در حال گرفتن خروجی MHTML...');
+            
+            // گرفتن MHTML از طریق CDP
+            const client = await page.target().createCDPSession();
+            const { data } = await client.send('Page.captureSnapshot', { format: 'mhtml' });
+            
+            // ذخیره فایل
+            fs.writeFileSync('page_complete.mhtml', data);
+            
+            console.log(`✅ فایل ذخیره شد: page_complete.mhtml (حجم: ${(data.length / 1024).toFixed(2)} KB)`);
+            
+            await browser.close();
+          })().catch(err => {
+            console.error('❌ خطا:', err);
+            process.exit(1);
+          });
           EOF
 
-      - name: 💾 ذخیره فایل MHTML در مخزن گیت‌هاب
+      - name: 💾 ذخیره در مخزن
         run: |
-          # بررسی می‌کنیم که فایل ساخته شده
           if [ -f "page_complete.mhtml" ]; then
-            echo "✅ فایل MHTML با موفقیت ساخته شد."
             mkdir -p output
             mv page_complete.mhtml output/
             
-            # یک فایل راهنما برای اندروید می‌سازیم
-            cat > output/README_ANDROID.txt << 'EOF'
+            cat > output/README.txt << 'EOF'
             ========================================
-            ✅ فایل MHTML با موفقیت تهیه شد!
+            ✅ فایل MHTML آماده استفاده است!
             ========================================
             
-            🔗 نحوه استفاده در اندروید:
-            1. فایل page_complete.mhtml رو دانلود کن (لینک پایین)
-            2. فایل رو با مرورگر کروم (یا فایرفاکس) باز کن
-            3. تمام عکس‌ها و استایل‌ها درست مثل حالت آنلاین نمایش داده می‌شن!
+            📱 نحوه استفاده در اندروید:
             
-            📍 نکته: این روش توسط خود مرورگر کروم انجام شده،
-            بنابراین تمام منابع (حتی تامبنیل‌های سنگین) داخل این یک فایل هست.
+            1. فایل page_complete.mhtml رو دانلود کن
+            2. با مرورگر کروم اندروید باز کن
+            3. همه عکس‌ها و استایل‌ها کامل نمایش داده می‌شن
+            
+            🔥 این فایل توسط خود کروم ساخته شده
+            ✅ تمام عکس‌های تامبنیل داخل فایل هستن
             ========================================
             EOF
+            
+            echo "✅ فایل با موفقیت ساخته شد"
           else
-            echo "❌ خطا: فایل MHTML ساخته نشد!"
+            echo "❌ خطا: فایل MHTML ساخته نشد"
             exit 1
           fi
 
-      - name: ارسال به مخزن گیت‌هاب
+      - name: ارسال به گیت‌هاب
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions@github.com"
+          git config user.email "actions@github.com"
           git add output/
-          git diff --staged --quiet || git commit -m "ذخیره صفحه به صورت MHTML: ${{ github.event.inputs.site_url }}"
+          git diff --staged --quiet || git commit -m "MHTML: ${{ github.event.inputs.site_url }}"
           git push
 
-      - name: نمایش لینک دانلود نهایی
+      - name: نمایش لینک
         run: |
           echo "=========================================="
-          echo "🎉 تمام! فایل MHTML مورد نظرت آماده است."
+          echo "✅ دانلود کامل شد!"
           echo ""
-          echo "📥 لینک مستقیم دانلود فایل MHTML:"
+          echo "📥 لینک دانلود فایل MHTML:"
           echo "https://github.com/${{ github.repository }}/tree/master/output/page_complete.mhtml"
           echo ""
-          echo "📱 برای اندروید: روی لینک بالا بزن، فایل دانلود می‌شه."
-          echo "   بعد با مرورگر کروم گوشیت بازش کن."
+          echo "📱 توی گوشی لینک رو باز کن و دانلود کن"
           echo "=========================================="
