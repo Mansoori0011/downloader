@@ -1,64 +1,139 @@
-name: V2Ray Config with TLS
+name: Create VLESS+TLS Config on Port 8443
 
 on:
   workflow_dispatch:
+    inputs:
+      custom_domain:
+        description: 'دامنه دلخواه برای SNI (مثال: dl.google.com)'
+        required: true
+        default: 'dl.google.com'
+      custom_host:
+        description: 'آدرس Host (میتوانید همان دامنه را وارد کنید)'
+        required: true
+        default: 'dl.google.com'
 
 permissions:
   contents: write
 
 jobs:
-  setup-v2ray:
+  build-vless-config:
     runs-on: ubuntu-latest
     steps:
-      - name: دریافت IP رانر
+      - name: 1. دریافت IP عمومی رانر
         id: get_ip
         run: |
           IP=$(curl -s https://api.ipify.org)
           echo "RUNNER_IP=$IP" >> $GITHUB_ENV
-          echo "IP: $IP"
+          echo "IP دریافت شد: $IP"
 
-      - name: ساخت UUID تصادفی
+      - name: 2. ساخت UUID تصادفی
         id: uuid
         run: |
           UUID=$(cat /proc/sys/kernel/random/uuid)
           echo "UUID=$UUID" >> $GITHUB_ENV
-          echo "UUID: $UUID"
+          echo "UUID ساخته شد: $UUID"
 
-      - name: ساخت کانفیگ با TLS
+      - name: 3. نصب و راه‌اندازی Xray روی پورت 8443
         run: |
-          # دامنه فیک برای SNI (مهم برای عبور از تحریم‌ها)
-          SNI_HOST="dl.google.com"
+          # نصب Xray
+          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          sudo apt install -y unzip
+          sudo unzip -o Xray-linux-64.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/xray
           
-          # ساخت لینک کانفیگ با فرمت دقیق نمونه شما
-          CONFIG_URL="vless://$UUID@${{ env.RUNNER_IP }}:8443?path=%2F&security=tls&encryption=none&insecure=0&host=$SNI_HOST&fp=chrome&type=ws&allowInsecure=0&sni=$SNI_HOST#V2Ray-GitHub-Runner"
+          # ایجاد پوشه کانفیگ
+          sudo mkdir -p /usr/local/etc/xray/
           
-          echo "=========================================" > v2ray-config.txt
-          echo "کانفیگ V2RayNG - کپی کنید:" >> v2ray-config.txt
-          echo "=========================================" >> v2ray-config.txt
-          echo "$CONFIG_URL" >> v2ray-config.txt
-          echo "" >> v2ray-config.txt
-          echo "جزئیات:" >> v2ray-config.txt
-          echo "پروتکل: VLESS" >> v2ray-config.txt
-          echo "پورت: 8443" >> v2ray-config.txt
-          echo "امنیت: TLS" >> v2ray-config.txt
-          echo "SNI: $SNI_HOST" >> v2ray-config.txt
-          echo "Network: WebSocket" >> v2ray-config.txt
-          echo "Path: /" >> v2ray-config.txt
+          # ساخت فایل کانفیگ سرور (مطابق با فرمت مورد نظر شما)
+          sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
+          {
+            \"inbounds\": [
+              {
+                \"port\": 8443,
+                \"protocol\": \"vless\",
+                \"settings\": {
+                  \"clients\": [
+                    {
+                      \"id\": \"$UUID\"
+                    }
+                  ],
+                  \"decryption\": \"none\"
+                },
+                \"streamSettings\": {
+                  \"network\": \"ws\",
+                  \"security\": \"tls\",
+                  \"tlsSettings\": {
+                    \"certificates\": [
+                      {
+                        \"certificateFile\": \"/etc/xray/cert.pem\",
+                        \"keyFile\": \"/etc/xray/key.pem\"
+                      }
+                    ]
+                  },
+                  \"wsSettings\": {
+                    \"path\": \"/\"
+                  }
+                }
+              }
+            ],
+            \"outbounds\": [
+              {
+                \"protocol\": \"freedom\"
+              }
+            ]
+          }
+          EOF"
           
-          echo "✅ کانفیگ ساخته شد:"
-          cat v2ray-config.txt
-          
-          echo "CONFIG_URL=$CONFIG_URL" >> $GITHUB_ENV
+          # اجرای Xray در پس‌زمینه
+          sudo /usr/local/bin/xray run -c /usr/local/etc/xray/config.json &
 
-      - name: ذخیره در مخزن
+      - name: 4. ایجاد تونل با Serveo (بدون ثبت‌نام) برای پورت 8443
+        run: |
+          # نصب SSH
+          sudo apt update && sudo apt install -y ssh
+          
+          # ایجاد تونل برای پورت 8443 (اجرا در پس‌زمینه)
+          ssh -o StrictHostKeyChecking=no -R 8443:localhost:8443 serveo.net &
+          sleep 5
+          
+          echo "✅ تونل روی پورت 8443 فعال شد"
+
+      - name: 5. ساخت لینک کانفیگ نهایی (مشابه نمونه شما)
+        run: |
+          CONFIG_URL="vless://$UUID@${{ env.RUNNER_IP }}:8443?path=%2F&security=tls&encryption=none&insecure=0&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=0&sni=${{ github.event.inputs.custom_domain }}#GitHubActions-VLESS-TLS"
+          
+          # همچنین لینک جایگزین با آدرس Serveo (در صورت نیاز)
+          SERVEO_URL="vless://$UUID@serveo.net:8443?path=%2F&security=tls&encryption=none&insecure=1&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=1&sni=${{ github.event.inputs.custom_domain }}#Serveo-VLESS-TLS"
+          
+          echo "=========================================" > v2ray-config-tls.txt
+          echo "🔗 لینک کانفیگ با IP مستقیم (مقایسه با نمونه شما):" >> v2ray-config-tls.txt
+          echo "=========================================" >> v2ray-config-tls.txt
+          echo "$CONFIG_URL" >> v2ray-config-tls.txt
+          echo "" >> v2ray-config-tls.txt
+          echo "=========================================" >> v2ray-config-tls.txt
+          echo "🔗 لینک جایگزین با آدرس Serveo (پایدارتر، نیاز به allowInsecure=1):" >> v2ray-config-tls.txt
+          echo "=========================================" >> v2ray-config-tls.txt
+          echo "$SERVEO_URL" >> v2ray-config-tls.txt
+          echo "" >> v2ray-config-tls.txt
+          echo "📋 جزئیات کانفیگ:" >> v2ray-config-tls.txt
+          echo "آدرس: ${{ env.RUNNER_IP }} (یا serveo.net)" >> v2ray-config-tls.txt
+          echo "پورت: 8443" >> v2ray-config-tls.txt
+          echo "UUID: $UUID" >> v2ray-config-tls.txt
+          echo "پروتکل: VLESS + TLS + WS" >> v2ray-config-tls.txt
+          echo "SNI: ${{ github.event.inputs.custom_domain }}" >> v2ray-config-tls.txt
+          echo "Host: ${{ github.event.inputs.custom_host }}" >> v2ray-config-tls.txt
+          echo "" >> v2ray-config-tls.txt
+          echo "⏱️ این سرویس به مدت 2 ساعت فعال است." >> v2ray-config-tls.txt
+          
+          cat v2ray-config-tls.txt
+
+      - name: 6. ذخیره فایل کانفیگ در مخزن
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add v2ray-config.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "v2ray tls config for ip ${{ env.RUNNER_IP }}"
+          git add v2ray-config-tls.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "add vless tls config port 8443"
           git push
 
-      - name: نمایش لینک نهایی
-        run: |
-          echo "🔗 لینک کانفیگ شما:"
-          echo "${{ env.CONFIG_URL }}"
+      - name: 7. نگهداری سرویس به مدت 2 ساعت
+        run: sleep 7200
