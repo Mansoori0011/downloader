@@ -1,67 +1,150 @@
-name: "روش دوم - با Playwright"
+name: "دانلود کامل صفحه با عکس‌های CDN77"
 
 on:
   workflow_dispatch:
     inputs:
-      site_url:
-        description: 'آدرس صفحه'
+      page_url:
+        description: 'آدرس صفحه (مثل https://fa.example.com/video/123)'
         required: true
 
 jobs:
-  mhtml-with-playwright:
+  download-page:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          
-      - name: Install Playwright
+
+      - name: نصب ابزارها
         run: |
-          npm init -y
-          npm install playwright
-          npx playwright install chromium
-          
-      - name: Save as MHTML with Playwright
+          sudo apt-get update
+          sudo apt-get install -y wget
+
+      - name: دانلود صفحه با تمام منابع از CDN77
         run: |
-          node - << 'EOF'
-          const { chromium } = require('playwright');
-          const fs = require('fs');
+          # استخراج دامنه اصلی از آدرس
+          MAIN_DOMAIN=$(echo "${{ github.event.inputs.page_url }}" | awk -F/ '{print $3}')
           
-          (async () => {
-            const browser = await chromium.launch({ headless: true });
-            const context = await browser.newContext();
-            const page = await context.newPage();
+          mkdir -p page
+          cd page
+          
+          # دانلود صفحه اصلی و همه منابع از CDN های مشخص
+          wget \
+            --recursive \
+            --level=2 \
+            --page-requisites \
+            --adjust-extension \
+            --convert-links \
+            --span-hosts \
+            --domains=$MAIN_DOMAIN,cdn77.phncdn.com,pix-cdn77.phncdn.com \
+            --no-parent \
+            --wait=2 \
+            --limit-rate=1M \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+            --header="Accept-Language: en-US,en;q=0.5" \
+            --execute robots=off \
+            "${{ github.event.inputs.page_url }}"
+          
+          cd ..
+
+      - name: استخراج و دانلود مستقیم عکس‌های تامبنیل
+        run: |
+          cd page
+          
+          # پیدا کردن همه عکس‌ها از فایل‌های HTML و CSS
+          find . -name "*.html" -exec cat {} \; > /tmp/all_content.txt
+          
+          # استخراج لینک‌های عکس از محتوای صفحه
+          grep -Eoi 'https?://[^"]+\.(jpg|jpeg|png|gif|webp)' /tmp/all_content.txt >> /tmp/images.txt
+          grep -Eoi 'https?://pix-cdn77[^"]+\.(jpg|jpeg|png|webp)' /tmp/all_content.txt >> /tmp/images.txt
+          grep -Eoi 'https?://cdn77[^"]+\.(jpg|jpeg|png|webp)' /tmp/all_content.txt >> /tmp/images.txt
+          
+          # حذف تکراری
+          sort -u /tmp/images.txt > /tmp/unique_images.txt
+          
+          echo "📸 تعداد عکس‌های پیدا شده: $(wc -l < /tmp/unique_images.txt)"
+          
+          # دانلود همه عکس‌ها در پوشه جداگانه
+          mkdir -p images
+          while IFS= read -r img_url; do
+            if [ ! -z "$img_url" ]; then
+              filename=$(basename "$img_url" | cut -d'?' -f1)
+              echo "⬇️ دانلود: $filename"
+              wget --timeout=15 --tries=3 -O "images/$filename" "$img_url" 2>/dev/null && echo "✅" || echo "❌"
+            fi
+          done < /tmp/unique_images.txt
+          
+          cd ..
+
+      - name: ساخت فایل HTML یکپارچه
+        run: |
+          cd page
+          
+          # پیدا کردن فایل HTML اصلی
+          MAIN_HTML=$(find . -name "*.html" -not -name "*.tmp" | head -1)
+          
+          if [ -f "$MAIN_HTML" ]; then
+            # کپی به عنوان فایل نهایی
+            cp "$MAIN_HTML" "../index.html"
             
-            await page.goto('${{ github.event.inputs.site_url }}', { 
-              waitUntil: 'networkidle',
-              timeout: 60000 
-            });
-            
-            await page.waitForTimeout(10000);
-            
-            // دریافت MHTML
-            const cdpSession = await page.context().newCDPSession(page);
-            const { data } = await cdpSession.send('Page.captureSnapshot');
-            
-            fs.writeFileSync('page_complete.mhtml', data);
-            console.log('✅ فایل MHTML ساخته شد');
-            
-            await browser.close();
-          })();
+            # جایگزینی لینک عکس‌ها با مسیر محلی
+            for img in ../page/images/*; do
+              if [ -f "$img" ]; then
+                imgname=$(basename "$img")
+                sed -i "s|https?://[^\"]*/$imgname|images/$imgname|g" "../index.html" 2>/dev/null || true
+              fi
+            done
+          fi
+          
+          cd ..
+          
+          # ساخت پوشه نهایی
+          mkdir -p final_page
+          mv index.html final_page/
+          cp -r page/images final_page/ 2>/dev/null || true
+          cp -r page/*.css final_page/ 2>/dev/null || true
+
+      - name: ساخت فایل ZIP نهایی
+        run: |
+          zip -r کامل_page.zip final_page/
+          
+          cat > راهنمای_اندروید.txt << 'EOF'
+          ========================================
+          ✅ فایل صفحه کامل آماده است!
+          ========================================
+          
+          📱 نحوه استفاده در اندروید:
+          
+          1. فایل کامل_page.zip رو دانلود کن
+          2. با Zarchiver اکسترکت کن
+          3. پوشه final_page رو باز کن
+          4. فایل index.html رو با Chrome باز کن
+          
+          ✅ همه عکس‌ها از CDN دانلود شدن
+          ✅ صفحه بدون اینترنت کار میکنه
+          ========================================
           EOF
           
-      - name: Upload
+          echo "📦 حجم فایل نهایی:"
+          ls -lh کامل_page.zip
+
+      - name: ارسال به مخزن
         run: |
-          mkdir -p output
-          mv page_complete.mhtml output/
-          git config user.name "bot"
-          git config user.email "bot@github.com"
-          git add output/
-          git commit -m "MHTML file" || echo "ok"
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+          git add کامل_page.zip final_page/ راهنمای_اندروید.txt
+          git diff --staged --quiet || git commit -m "صفحه کامل با عکس‌های CDN77"
           git push
+
+      - name: نمایش لینک
+        run: |
+          echo "=========================================="
+          echo "✅ دانلود کامل شد!"
+          echo ""
+          echo "📥 لینک دانلود فایل ZIP:"
+          echo "https://github.com/${{ github.repository }}/blob/main/کامل_page.zip"
+          echo ""
+          echo "📱 توی گوشی لینک رو باز کن و دانلود کن"
+          echo "=========================================="
