@@ -144,7 +144,7 @@ jobs:
           echo "✅ دانلود کامل شد!"
           echo ""
           echo "📥 لینک دانلود فایل ZIP:"
-          echo "https://github.com/${{ github.repository }}/blob/main/کامل_page.zip"
+          echo "https://github.com/${{ github.repository }}/tree/master/کامل_page.zip"
           echo ""
           echo "📱 توی گوشی لینک رو باز کن و دانلود کن"
           echo "=========================================="
