@@ -1,14 +1,15 @@
-name: "SingleFile - ذخیره کامل سایت در یک فایل"
+name: "ذخیره کامل سایت به صورت MHTML"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس سایت'
+        description: 'آدرس کامل سایت'
         required: true
+        default: 'https://example.com'
 
 jobs:
-  singlefile:
+  save-mhtml:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,30 +18,92 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: 📦 Install SingleFile
+      - name: 🛠️ Install Chrome
         run: |
-          pip install singlefile
-          playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y wget curl
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
+          rm google-chrome-stable_current_amd64.deb
 
-      - name: 💾 Save as SingleFile HTML
+      - name: 💾 Save as MHTML with Chrome Headless
         run: |
           mkdir -p ./output
-          singlefile "${{ github.event.inputs.site_url }}" --output="./output/site_complete.html"
-          echo "✅ فایل ذخیره شد" >> ./output/info.txt
+          
+          # روش اصلی: ذخیره با دیباگر کروم
+          google-chrome-stable \
+            --headless=new \
+            --disable-gpu \
+            --no-sandbox \
+            --disable-dev-shm-usage \
+            --virtual-time-budget=10000 \
+            --dump-dom \
+            "${{ github.event.inputs.site_url }}" > ./output/page.html
+          
+          # دانلود کامل با wget برای اطمینان
+          wget \
+            --page-requisites \
+            --convert-links \
+            --adjust-extension \
+            --no-host-directories \
+            --directory-prefix=./output \
+            --execute robots=off \
+            --span-hosts \
+            --user-agent="Mozilla/5.0 (Android 14; Mobile)" \
+            "${{ github.event.inputs.site_url }}"
 
-      - name: 📱 Add Android guide
+      - name: 📦 Create single HTML with embedded images
         run: |
-          echo "📱 فایل site_complete.html رو توی مرورگر گوشی باز کن" > ./output/README.txt
+          cd ./output
+          
+          # پیدا کردن فایل اصلی HTML
+          main_html=$(find . -maxdepth 1 -name "*.html" | head -1)
+          
+          if [ -f "$main_html" ]; then
+            # جایگزینی عکس‌ها با base64 برای یکپارچه شدن
+            find . -name "*.jpg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" | while read img; do
+              img_name=$(basename "$img")
+              img_base64=$(base64 -w 0 "$img")
+              content_type="image/${img_name##*.}"
+              sed -i "s|$img_name|data:$content_type;base64,$img_base64|g" "$main_html" 2>/dev/null || true
+            done
+          fi
 
-      - name: 💾 Commit
+      - name: 📱 Create Android shortcut
+        run: |
+          cat > ./output/README_ANDROID.txt << 'EOF'
+          ========================================
+          ✅ فایل آماده استفاده در اندروید است
+          ========================================
+          
+          روش استفاده:
+          1. فایل page.html رو دانلود کن
+          2. با کروم اندروید باز کن
+          3. همه عکس‌ها نمایش داده می‌شوند
+          
+          یا:
+          - کل پوشه output رو دانلود کن
+          - فایل HTML رو در مرورگر باز کن
+          
+          لینک دانلود از گیت‌هاب:
+          https://github.com/YOUR_REPO/tree/main/output
+          ========================================
+          EOF
+
+      - name: 💾 Commit and Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "actions@github.com"
           git add output/
-          git commit -m "SingleFile: ${{ github.event.inputs.site_url }}" || echo "تغییری نیست"
+          git diff --staged --quiet || git commit -m "MHTML: ${{ github.event.inputs.site_url }}"
           git push
+
+      - name: ✅ Show link
+        run: |
+          echo "=========================================="
+          echo "✅ فایل‌ها با موفقیت ذخیره شدند"
+          echo ""
+          echo "📁 https://github.com/${{ github.repository }}/tree/master/output"
+          echo ""
+          echo "📱 فایل output/page.html رو توی گوشی باز کن"
+          echo "=========================================="
