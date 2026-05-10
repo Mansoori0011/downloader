@@ -1,87 +1,102 @@
-name: Telegram MTProto Proxy
+name: “دانلود کامل سایت با تمام منابع”
+
 on:
   workflow_dispatch:
+    inputs:
+      site_url:
+        description: ‘آدرس کامل سایت (با http:// یا https://)’
+        required: true
+        default: ‘https://example.com’
+      max_depth:
+        description: ‘عمق لینک‌های دنبال شود (۱ تا ۵)’
+        required: true
+        default: ‘2’
 
 jobs:
-  proxy:
+  mirror-site:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    permissions:
+      contents: write
 
     steps:
-      - name: Download and Run MTProto Proxy
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🌐 Mirror entire website with wget
         run: |
-          # دانلود mtproto.zig
-          curl -L -o mtproto-proxy https://github.com/sleep3r/mtproto.zig/releases/latest/download/mtproto-proxy-linux-amd64
-          chmod +x mtproto-proxy
+          # نصب wget
+          sudo apt-get update
+          sudo apt-get install -y wget
 
-          # تولید سکرت تصادفی
-          SECRET=$(head -c 16 /dev/urandom | xxd -ps)
-          echo "SECRET=$SECRET" >> $GITHUB_ENV
+          # پاک کردن پوشه قبلی
+          rm -rf ./mirrored-site
 
-          # اجرای پروکسی روی پورت 8443 (فال‌بک)
-          ./mtproto-proxy --port 8443 --secret "$SECRET" --tls-domain "www.google.com" &
-          sleep 3
-          
-          echo "✅ MTProto Proxy is running on port 8443"
+          # دانلود کامل سایت (عکس، CSS، JS، فونت و...)
+          wget \
+            --mirror \
+            --convert-links \
+            --adjust-extension \
+            --page-requisites \
+            --no-parent \
+            --wait=2 \
+            --limit-rate=100k \
+            --directory-prefix=./mirrored-site \
+            --execute robots=off \
+            --user-agent="Mozilla/5.0 (Android 14; Mobile) AppleWebKit/537.36" \
+            -e "https_proxy=${{ secrets.HTTPS_PROXY }}" \
+            "${{ github.event.inputs.site_url }}"
 
-      - name: Create Cloudflare Tunnel
+          # بازسازی ساختار پوشه
+          find ./mirrored-site -type f -name "*.html" -exec sh -c '
+            for file; do
+              mv "$file" "${file%.html}.html"
+            done
+          ' sh {} +
+
+      - name: 📱 Create Android shortcut file
         run: |
-          # نصب cloudflared
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          
-          # ایجاد تونل
-          cloudflared tunnel --url tcp://localhost:8443 > tunnel.log 2>&1 &
-          sleep 15
-          
-          # نمایش کل لاگ برای دیباگ
-          echo "--- Tunnel Log ---"
-          cat tunnel.log
-          echo "------------------"
-          
-          # استخراج آدرس با روش دقیق‌تر
-          TUNNEL_LINE=$(grep -oP 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log || grep -oP '[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log || echo "")
-          
-          if [ -z "$TUNNEL_LINE" ]; then
-            # روش دوم: جستجوی الگوی متفاوت
-            TUNNEL_LINE=$(grep -oP 'Registered tunnel connection.*' tunnel.log || echo "")
-            echo "TUNNEL_LINE: $TUNNEL_LINE"
-          fi
-          
-          echo "Extracted: $TUNNEL_LINE"
-          
-          # استخراج هاست و پورت از URL
-          if [[ $TUNNEL_LINE == *"trycloudflare.com"* ]]; then
-            TUNNEL_HOST=$(echo $TUNNEL_LINE | sed 's|https://||' | cut -d: -f1)
-            
-            # پورت معمولاً در خروجی trycloudflare.com نمایش داده می‌شود
-            TUNNEL_PORT=$(grep -oP 'trycloudflare\.com:\K\d+' tunnel.log || echo "443")
-            
-            echo "TUNNEL_HOST=$TUNNEL_HOST" >> $GITHUB_ENV
-            echo "TUNNEL_PORT=$TUNNEL_PORT" >> $GITHUB_ENV
-            
-            # ساخت لینک تلگرام
-            TG_LINK="tg://proxy?server=$TUNNEL_HOST&port=$TUNNEL_PORT&secret=ee${SECRET}"
-            echo "TG_LINK=$TG_LINK" >> $GITHUB_ENV
-            
-            echo "========================================="
-            echo "✅ پروکسی تلگرام آماده است!"
-            echo "📱 لینک اتصال:"
-            echo "$TG_LINK"
-            echo "========================================="
-            echo ""
-            echo "🔧 اطلاعات دستی:"
-            echo "Server: $TUNNEL_HOST"
-            echo "Port: $TUNNEL_PORT"
-            echo "Secret: ee${SECRET}"
-          else
-            echo "❌ خطا: نتوانستیم آدرس تونل را استخراج کنیم"
-            cat tunnel.log
-            exit 1
-          fi
+          # ساخت فایل راهنما برای اندروید
+          cat > ./mirrored-site/ANDROID_README.md << 'EOF'
+# 📱 نحوه مشاهده این سایت در اندروید
 
-      - name: Keep Alive
+## روش اول (ساده) 🟢
+فایل اصلی سایت رو با مرورگر گوشی باز کن:
+`index.html` یا نام فایل اصلی که دانلود شده
+
+## روش دوم (آفلاین کامل) 🔵
+1. کل پوشه `mirrored-site` رو دانلود کن:
+   - برو به مخزن گیت‌هاب
+   - دکمه `<> Code` → `Download ZIP`
+2. فایل ZIP رو از حالت فشرده خارج کن
+3. داخل پوشه، فایل `index.html` رو باز کن
+
+## ساختار فایل‌ها
+- 📄 HTML: تمام صفحات
+- 🖼️ Images: عکس‌ها در پوشه‌های `images/` یا `img/`
+- 🎨 CSS: فایل‌های استایل
+- ⚙️ JS: اسکریپت‌ها
+
+✅ تمام منابع محلی ذخیره شده‌اند (اینترنت نیاز نیست بعد از دانلود)
+EOF
+
+      - name: 💾 Commit and Push
         run: |
-          echo "پروکسی فعال است. لینک اتصال:"
-          echo "${{ env.TG_LINK }}"
-          sleep 21600
+          git config user.name "github-actions[bot]"
+          git config user.email "actions@github.com"
+          git add mirrored-site/
+          git diff --staged --quiet || git commit -m "📦 Mirror کامل: ${{ github.event.inputs.site_url }} - $(date '+%Y-%m-%d %H:%M')"
+          git push
+
+      - name: ✅ نمایش لینک دسترسی
+        run: |
+          echo "=========================================="
+          echo "✅ سایت با موفقیت دانلود شد!"
+          echo ""
+          echo "🔗 لینک دسترسی مستقم:"
+          echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
+          echo ""
+          echo "📱 روی گوشی:"
+          echo "1. لینک بالا رو باز کن"
+          echo "2. فایل index.html رو پیدا کن"
+          echo "3. روش Raw یا Download رو بزن تا تو مرورگر گوشی باز بشه"
+          echo "=========================================="
