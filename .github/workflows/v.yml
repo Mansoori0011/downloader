@@ -1,130 +1,113 @@
-name: "دانلود کامل سایت با تمام CDN ها"
+name: "دانلود محتوای سایت (نسخه مخصوص)"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس سایت'
+        description: 'آدرس صفحه مورد نظر'
         required: true
-        default: 'https://example.com'
+      download_images:
+        description: 'دانلود عکس‌ها (yes/no)'
+        default: 'yes'
+      download_videos:
+        description: 'دانلود ویدئوها (yes/no)'
+        default: 'no'
 
 jobs:
-  download-full:
+  download-content:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🌐 Download website + all CDNs
+      - name: Install tools
         run: |
-          rm -rf ./site
-          mkdir -p ./site
-          cd ./site
+          sudo apt-get update
+          sudo apt-get install -y wget curl grep sed
+          # نصب yt-dlp برای دانلود ویدئو (اگه لازم باشه)
+          sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+
+      - name: Download HTML and images
+        run: |
+          mkdir -p ./content
+          cd ./content
           
-          # استخراج دامنه اصلی
-          MAIN_DOMAIN=$(echo "${{ github.event.inputs.site_url }}" | awk -F/ '{print $3}')
-          
-          # دانلود با اجازه به دامنه های مختلف (CDN ها)
+          # دانلود صفحه اصلی و منابع
           wget \
             --recursive \
-            --level=5 \
-            --no-clobber \
+            --level=2 \
             --page-requisites \
             --adjust-extension \
             --convert-links \
-            --restrict-file-names=windows \
-            --domains=$MAIN_DOMAIN,cloudflare.com,cloudfront.net,amazonaws.com,fastly.net,cdninstagram.com,cdn.example.com \
-            --span-hosts \
             --no-parent \
             --wait=1 \
-            --limit-rate=200k \
+            --limit-rate=500k \
             --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
             --execute robots=off \
-            --accept="*.html,*.htm,*.css,*.js,*.jpg,*.jpeg,*.png,*.gif,*.webp,*.svg,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.mp3" \
-            --header="Accept: image/webp,image/apng,image/*,*/*;q=0.8" \
+            --accept="*.html,*.htm,*.css,*.js,*.jpg,*.jpeg,*.png,*.gif,*.webp" \
             "${{ github.event.inputs.site_url }}"
           
           cd ..
 
-      - name: 🔍 Extract all image URLs from HTML and CSS
+      - name: Extract and download images
+        if: github.event.inputs.download_images == 'yes'
         run: |
-          cd ./site
+          cd ./content
           
-          # پیدا کردن تمام عکس‌ها از فایل‌های HTML
-          find . -name "*.html" -o -name "*.htm" | while read file; do
-            grep -Eo '(https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg|ico))' "$file" >> /tmp/all_images.txt
-            grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/url(//g' | sed 's/)//g' >> /tmp/all_images.txt
+          # استخراج لینک همه عکس‌ها
+          find . -type f -name "*.html" -exec grep -Eo 'https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg)' {} \; > /tmp/img_links.txt
+          find . -type f -name "*.css" -exec grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' {} \; | sed 's/url(//g' | sed 's/)//g' >> /tmp/img_links.txt
+          
+          sort -u /tmp/img_links.txt | while read url; do
+            echo "⬇️ $url"
+            wget --timeout=15 --tries=2 -nc "$url" 2>/dev/null || true
           done
-          
-          # پیدا کردن از فایل‌های CSS
-          find . -name "*.css" | while read file; do
-            grep -Eo '(https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|svg))' "$file" >> /tmp/all_images.txt
-            grep -Eo 'url\([^)]+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/url(//g' | sed 's/)//g' >> /tmp/all_images.txt
-          done
-          
-          # حذف تکراری‌ها
-          sort -u /tmp/all_images.txt > /tmp/unique_images.txt
-          
-          # دانلود تمام عکس‌های پیدا شده
-          mkdir -p ./downloaded_images
-          while IFS= read -r imgurl; do
-            if [ ! -z "$imgurl" ]; then
-              filename=$(basename "$imgurl" | cut -d'?' -f1 | cut -d'#' -f1)
-              echo "Downloading: $imgurl"
-              wget --timeout=10 --tries=3 --quiet -P ./downloaded_images/ "$imgurl" 2>/dev/null || true
-            fi
-          done < /tmp/unique_images.txt
           
           cd ..
 
-      - name: 📦 Create ZIP with everything
+      - name: Download videos (if enabled)
+        if: github.event.inputs.download_videos == 'yes'
         run: |
-          zip -r site-full.zip ./site/
-          echo "✅ فایل ZIP ساخته شد"
+          mkdir -p ./videos
+          cd ./content
+          
+          # استخراج لینک ویدئوها از صفحه
+          grep -Eo 'https?://[^"'"'"']+\.(mp4|webm|m3u8|ts)' ./*.html 2>/dev/null > /tmp/video_links.txt || true
+          grep -Eo '(src|data-src|data-video)=["'"'"'][^"'"'"']+\.(mp4|webm)' ./*.html 2>/dev/null >> /tmp/video_links.txt || true
+          
+          sort -u /tmp/video_links.txt | while read url; do
+            clean_url=$(echo "$url" | sed 's/^.*=//g' | sed 's/["'"'"']//g')
+            echo "🎬 دانلود ویدئو: $clean_url"
+            yt-dlp -o "../videos/%(title)s.%(ext)s" "$clean_url" || true
+          done
+          
+          cd ..
 
-      - name: 📱 Android instructions
+      - name: Create zip file
         run: |
-          cat > ANDROID_GUIDE.txt << 'EOF'
-          ========================================
-          📱 راهنمای اندروید
-          ========================================
-          
-          1. دانلود فایل site-full.zip
-          2. نصب Zarchiver از گوگل پلی
-          3. اکسترکت فایل zip
-          4. پوشه site رو باز کن
-          5. فایل index.html رو با Chrome باز کن
-          
-          ✅ تمام عکس‌ها (حتی از CDN ها) ذخیره شده‌اند
-          ✅ آفلاین کامل کار می‌کند
-          
-          اگه بعضی عکس‌ها نمایش داده نشد:
-          - فایل index.html رو با Notepad باز کن
-          - آدرس HTTPS رو به HTTP تغییر بده
-          ========================================
-          EOF
+          zip -r website_content.zip ./content ./videos 2>/dev/null || zip -r website_content.zip ./content
+          ls -lh website_content.zip
 
-      - name: 💾 Commit
+      - name: Commit
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git add site/ site-full.zip ANDROID_GUIDE.txt
-          git diff --staged --quiet || git commit -m "Full download with CDNs: ${{ github.event.inputs.site_url }}"
+          git config user.name "bot"
+          git config user.email "bot@github.com"
+          git add website_content.zip content/ videos/ 2>/dev/null || true
+          git commit -m "Downloaded: ${{ github.event.inputs.site_url }}" || echo "No changes"
           git push
 
-      - name: ✅ Show links
+      - name: Show result
         run: |
           echo "=========================================="
-          echo "✅ دانلود کامل شد"
+          echo "✅ دانلود انجام شد"
+          echo "📦 فایل ZIP:"
+          echo "https://github.com/${{ github.repository }}/blob/main/website_content.zip"
           echo ""
-          echo "📦 دانلود ZIP (بهترین گزینه):"
-          echo "https://github.com/${{ github.repository }}/blob/main/site-full.zip"
-          echo ""
-          echo "📁 مشاهده فایل‌ها:"
-          echo "https://github.com/${{ github.repository }}/tree/master/site"
-          echo ""
-          echo "📱 توی گوشی، فایل ZIP رو دانلود و اکسترکت کن"
+          echo "⚠️ توجه: برای این نوع سایت‌ها:"
+          echo "- عکس‌ها معمولاً دانلود می‌شن"
+          echo "- ویدئوها فقط با گزینه yes دانلود می‌شن"
+          echo "- ویدئوهای استریمینگ (m3u8) نیاز به ابزار جدا دارن"
           echo "=========================================="
