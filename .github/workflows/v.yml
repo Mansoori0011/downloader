@@ -1,132 +1,67 @@
-name: "ذخیره صفحه به صورت MHTML با Puppeteer"
+name: "روش دوم - با Playwright"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس صفحه مورد نظر'
+        description: 'آدرس صفحه'
         required: true
-        default: 'https://example.com'
 
 jobs:
-  save-as-mhtml:
+  mhtml-with-playwright:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: 📥 دریافت کدها
-        uses: actions/checkout@v4
-
-      - name: 📦 نصب Node.js
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: 📦 نصب Puppeteer
+          
+      - name: Install Playwright
         run: |
-          npm install puppeteer
-          npx puppeteer browsers install chrome
-
-      - name: 📸 ذخیره صفحه به عنوان MHTML
+          npm init -y
+          npm install playwright
+          npx playwright install chromium
+          
+      - name: Save as MHTML with Playwright
         run: |
           node - << 'EOF'
-          const puppeteer = require('puppeteer');
+          const { chromium } = require('playwright');
           const fs = require('fs');
-
+          
           (async () => {
-            console.log('🚀 در حال راه‌اندازی مرورگر کروم...');
-            const browser = await puppeteer.launch({
-              headless: 'new',
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu'
-              ]
-            });
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext();
+            const page = await context.newPage();
             
-            const page = await browser.newPage();
-            
-            const siteUrl = '${{ github.event.inputs.site_url }}';
-            console.log(`🌐 در حال بارگذاری صفحه: ${siteUrl}`);
-            
-            await page.goto(siteUrl, { 
-              waitUntil: 'networkidle2',
+            await page.goto('${{ github.event.inputs.site_url }}', { 
+              waitUntil: 'networkidle',
               timeout: 60000 
             });
             
-            // منتظر میمونیم تا عکس‌های تامبنیل لود بشن
-            console.log('⏳ منتظر لود کامل عکس‌ها (15 ثانیه)...');
-            await page.waitForTimeout(15000);
+            await page.waitForTimeout(10000);
             
-            // اسکرول به پایین برای لود عکس‌های بیشتر
-            await page.evaluate(async () => {
-              window.scrollTo(0, document.body.scrollHeight);
-            });
-            await page.waitForTimeout(3000);
+            // دریافت MHTML
+            const cdpSession = await page.context().newCDPSession(page);
+            const { data } = await cdpSession.send('Page.captureSnapshot');
             
-            console.log('📄 در حال گرفتن خروجی MHTML...');
-            
-            // گرفتن MHTML از طریق CDP
-            const client = await page.target().createCDPSession();
-            const { data } = await client.send('Page.captureSnapshot', { format: 'mhtml' });
-            
-            // ذخیره فایل
             fs.writeFileSync('page_complete.mhtml', data);
-            
-            console.log(`✅ فایل ذخیره شد: page_complete.mhtml (حجم: ${(data.length / 1024).toFixed(2)} KB)`);
+            console.log('✅ فایل MHTML ساخته شد');
             
             await browser.close();
-          })().catch(err => {
-            console.error('❌ خطا:', err);
-            process.exit(1);
-          });
+          })();
           EOF
-
-      - name: 💾 ذخیره در مخزن
+          
+      - name: Upload
         run: |
-          if [ -f "page_complete.mhtml" ]; then
-            mkdir -p output
-            mv page_complete.mhtml output/
-            
-            cat > output/README.txt << 'EOF'
-            ========================================
-            ✅ فایل MHTML آماده استفاده است!
-            ========================================
-            
-            📱 نحوه استفاده در اندروید:
-            
-            1. فایل page_complete.mhtml رو دانلود کن
-            2. با مرورگر کروم اندروید باز کن
-            3. همه عکس‌ها و استایل‌ها کامل نمایش داده می‌شن
-            
-            🔥 این فایل توسط خود کروم ساخته شده
-            ✅ تمام عکس‌های تامبنیل داخل فایل هستن
-            ========================================
-            EOF
-            
-            echo "✅ فایل با موفقیت ساخته شد"
-          else
-            echo "❌ خطا: فایل MHTML ساخته نشد"
-            exit 1
-          fi
-
-      - name: ارسال به گیت‌هاب
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
+          mkdir -p output
+          mv page_complete.mhtml output/
+          git config user.name "bot"
+          git config user.email "bot@github.com"
           git add output/
-          git diff --staged --quiet || git commit -m "MHTML: ${{ github.event.inputs.site_url }}"
+          git commit -m "MHTML file" || echo "ok"
           git push
-
-      - name: نمایش لینک
-        run: |
-          echo "=========================================="
-          echo "✅ دانلود کامل شد!"
-          echo ""
-          echo "📥 لینک دانلود فایل MHTML:"
-          echo "https://github.com/${{ github.repository }}/tree/master/output/page_complete.mhtml"
-          echo ""
-          echo "📱 توی گوشی لینک رو باز کن و دانلود کن"
-          echo "=========================================="
