@@ -42,20 +42,14 @@ jobs:
 
       - name: 📱 Create Android shortcut file
         run: |
-          cat > ./mirrored-site/ANDROID_README.md << 'EOF'
-# 📱 نحوه مشاهده این سایت در اندروید
-
-## روش اول (ساده) 🟢
-فایل اصلی سایت رو با مرورگر گوشی باز کن
-
-## روش دوم (آفلاین کامل) 🔵
-1. کل پوشه mirrored-site رو دانلود کن
-2. دکمه Code → Download ZIP
-3. فایل ZIP رو از حالت فشرده خارج کن
-4. داخل پوشه، فایل index.html رو باز کن
-
-✅ تمام منابع محلی ذخیره شده‌اند
-EOF
+          echo "# نحوه مشاهده این سایت در اندروید" > ./mirrored-site/ANDROID_README.md
+          echo "" >> ./mirrored-site/ANDROID_README.md
+          echo "روش اول: فایل index.html رو با مرورگر گوشی باز کن" >> ./mirrored-site/ANDROID_README.md
+          echo "" >> ./mirrored-site/ANDROID_README.md
+          echo "روش دوم برای آفلاین:" >> ./mirrored-site/ANDROID_README.md
+          echo "1. دکمه Code -> Download ZIP" >> ./mirrored-site/ANDROID_README.md
+          echo "2. فایل رو از حالت فشرده خارج کن" >> ./mirrored-site/ANDROID_README.md
+          echo "3. index.html رو باز کن" >> ./mirrored-site/ANDROID_README.md
 
       - name: 💾 Commit and Push
         run: |
@@ -71,5 +65,5 @@ EOF
           echo "✅ سایت با موفقیت دانلود شد"
           echo ""
           echo "🔗 لینک دسترسی:"
-          echo "https://github.com/${{ github.repository }}/tree/master/mirrored-site"
+          echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
           echo "=========================================="
