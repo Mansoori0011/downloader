@@ -19,6 +19,9 @@ jobs:
   build-vless-config:
     runs-on: ubuntu-latest
     steps:
+      - name: 0. Clone مخزن (برای دسترسی به git)
+        uses: actions/checkout@v4
+
       - name: 1. دریافت IP عمومی رانر
         id: get_ip
         run: |
@@ -44,7 +47,7 @@ jobs:
           # ایجاد پوشه کانفیگ
           sudo mkdir -p /usr/local/etc/xray/
           
-          # ساخت فایل کانفیگ سرور (مطابق با فرمت مورد نظر شما)
+          # ساخت فایل کانفیگ سرور
           sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
           {
             \"inbounds\": [
@@ -98,20 +101,19 @@ jobs:
           
           echo "✅ تونل روی پورت 8443 فعال شد"
 
-      - name: 5. ساخت لینک کانفیگ نهایی (مشابه نمونه شما)
+      - name: 5. ساخت لینک کانفیگ نهایی
         run: |
           CONFIG_URL="vless://$UUID@${{ env.RUNNER_IP }}:8443?path=%2F&security=tls&encryption=none&insecure=0&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=0&sni=${{ github.event.inputs.custom_domain }}#GitHubActions-VLESS-TLS"
           
-          # همچنین لینک جایگزین با آدرس Serveo (در صورت نیاز)
           SERVEO_URL="vless://$UUID@serveo.net:8443?path=%2F&security=tls&encryption=none&insecure=1&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=1&sni=${{ github.event.inputs.custom_domain }}#Serveo-VLESS-TLS"
           
           echo "=========================================" > v2ray-config-tls.txt
-          echo "🔗 لینک کانفیگ با IP مستقیم (مقایسه با نمونه شما):" >> v2ray-config-tls.txt
+          echo "🔗 لینک کانفیگ با IP مستقیم:" >> v2ray-config-tls.txt
           echo "=========================================" >> v2ray-config-tls.txt
           echo "$CONFIG_URL" >> v2ray-config-tls.txt
           echo "" >> v2ray-config-tls.txt
           echo "=========================================" >> v2ray-config-tls.txt
-          echo "🔗 لینک جایگزین با آدرس Serveo (پایدارتر، نیاز به allowInsecure=1):" >> v2ray-config-tls.txt
+          echo "🔗 لینک جایگزین با آدرس Serveo (پایدارتر):" >> v2ray-config-tls.txt
           echo "=========================================" >> v2ray-config-tls.txt
           echo "$SERVEO_URL" >> v2ray-config-tls.txt
           echo "" >> v2ray-config-tls.txt
@@ -119,10 +121,6 @@ jobs:
           echo "آدرس: ${{ env.RUNNER_IP }} (یا serveo.net)" >> v2ray-config-tls.txt
           echo "پورت: 8443" >> v2ray-config-tls.txt
           echo "UUID: $UUID" >> v2ray-config-tls.txt
-          echo "پروتکل: VLESS + TLS + WS" >> v2ray-config-tls.txt
-          echo "SNI: ${{ github.event.inputs.custom_domain }}" >> v2ray-config-tls.txt
-          echo "Host: ${{ github.event.inputs.custom_host }}" >> v2ray-config-tls.txt
-          echo "" >> v2ray-config-tls.txt
           echo "⏱️ این سرویس به مدت 2 ساعت فعال است." >> v2ray-config-tls.txt
           
           cat v2ray-config-tls.txt
