@@ -1,0 +1,15 @@
+=========================================
+🔗 لینک کانفیگ با IP مستقیم:
+=========================================
+vless://ea40ebea-9a43-4422-8be8-a7ae9862dae6@172.174.166.192:8443?path=%2F&security=tls&encryption=none&insecure=0&host=Sd1.iran-ahwaz.ir&fp=chrome&type=ws&allowInsecure=0&sni=Sd1.iran-ahwaz.ir#GitHubActions-VLESS-TLS
+
+=========================================
+🔗 لینک جایگزین با آدرس Serveo (پایدارتر):
+=========================================
+vless://ea40ebea-9a43-4422-8be8-a7ae9862dae6@serveo.net:8443?path=%2F&security=tls&encryption=none&insecure=1&host=Sd1.iran-ahwaz.ir&fp=chrome&type=ws&allowInsecure=1&sni=Sd1.iran-ahwaz.ir#Serveo-VLESS-TLS
+
+📋 جزئیات کانفیگ:
+آدرس: 172.174.166.192 (یا serveo.net)
+پورت: 8443
+UUID: ea40ebea-9a43-4422-8be8-a7ae9862dae6
+⏱️ این سرویس به مدت 2 ساعت فعال است.
