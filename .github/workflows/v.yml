@@ -93,7 +93,7 @@ EOF
           echo "✅ سایت با موفقیت دانلود شد!"
           echo ""
           echo "🔗 لینک دسترسی مستقم:"
-          echo "https://github.com/${{ github.repository }}/tree/master/mirrored-site"
+          echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
           echo ""
           echo "📱 روی گوشی:"
           echo "1. لینک بالا رو باز کن"
