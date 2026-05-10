@@ -1,38 +1,30 @@
-name: Save Runner IP to Repo
+name: Deploy VPN & Check Ports
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'  # هر 30 دقیقه یکبار (اختیاری)
-
-permissions:
-  contents: write  # اجازه نوشتن در مخزن
+  workflow_dispatch:  # با این گزینه، خودت هر موقع خواستی اجرایش می‌کنی
 
 jobs:
-  save-runner-ip:
+  setup-and-scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: 🚀 (1) اتصال به VPS و نصب WireGuard
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_IP }}     # IP سرور مجانیت اینجا
+          username: ubuntu                # یا root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo apt update
+            sudo apt install -y wireguard
+            echo "WireGuard با موفقیت نصب شد!"
 
-      - name: دریافت IP عمومی رانر
-        id: get_ip
-        run: |
-          IP=$(curl -s https://api.ipify.org)
-          echo "RUNNER_IP=$IP" >> $GITHUB_ENV
-          echo "IP دریافت شد: $IP"
-
-      - name: ذخیره IP در فایل
-        run: |
-          echo "آخرین بروزرسانی: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > runner-ip.txt
-          echo "IP رانر: ${{ env.RUNNER_IP }}" >> runner-ip.txt
-
-      - name: Commit و Push فایل به مخزن
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add runner-ip.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "update runner ip: ${{ env.RUNNER_IP }}"
-          git push
+      - name: 🔍 (2) اسکن پورت‌های باز VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo apt install -y nmap
+            echo "در حال اسکن پورت‌های باز..."
+            nmap -sV -p- localhost
