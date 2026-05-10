@@ -1,172 +1,129 @@
-name: "دانلود کامل صفحه + تامبنیل‌ها (حتی از CDN های مختلف)"
+name: "ذخیره صفحه به صورت MHTML با کروم"
 
 on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس صفحه'
+        description: 'آدرس صفحه مورد نظر (مثل سایتی که گفتی)'
         required: true
+        default: 'https://example.com'
 
 jobs:
-  download-all-thumbnails:
+  save-as-mhtml:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 دریافت کدهای مخزن
+        uses: actions/checkout@v4
 
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl grep sed jq
+      - name: 🐍 نصب پایتون
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-      - name: Download HTML and embedded resources
+      - name: 📦 نصب کتابخانه‌های مورد نیاز برای کنترل کروم
         run: |
-          mkdir -p site
-          cd site
-          
-          # دانلود صفحه اصلی با تمام منابع مستقیم
-          wget -p -k -E -np -e robots=off --limit-rate=500k \
-            --header="Accept: image/webp,image/apng,image/*,*/*;q=0.8" \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-            "${{ github.event.inputs.site_url }}"
-          
-          cd ..
+          pip install selenium webdriver-manager
 
-      - name: Extract ALL thumbnail URLs (including from JavaScript)
+      - name: 🌐 نصب و آماده‌سازی گوگل کروم
         run: |
-          cd site
+          # نصب کروم
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y -qq
+          rm google-chrome-stable_current_amd64.deb
           
-          # استخراج از فایل‌های HTML و JS
-          find . -type f \( -name "*.html" -o -name "*.htm" -o -name "*.js" \) | while read file; do
-            # الگوهای رایج تامبنیل در سایت‌های بزرگ
-            grep -Eoi '(https?://[^"'"'"']+\.(jpg|jpeg|png|gif|webp|avif))' "$file" >> /tmp/raw_urls.txt
-            grep -Eoi '"url":"[^"]+\.(jpg|jpeg|png|gif|webp)"' "$file" | sed 's/"url":"//g' | sed 's/"//g' >> /tmp/raw_urls.txt
-            grep -Eoi '"image":"[^"]+\.(jpg|jpeg|png|gif|webp)"' "$file" | sed 's/"image":"//g' | sed 's/"//g' >> /tmp/raw_urls.txt
-            grep -Eoi '"thumbnail":"[^"]+\.(jpg|jpeg|png|gif|webp)"' "$file" | sed 's/"thumbnail":"//g' | sed 's/"//g' >> /tmp/raw_urls.txt
-            grep -Eoi 'data-thumbnail=["'"'"'][^"'"'"']+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/data-thumbnail=["'"'"']//gi' >> /tmp/raw_urls.txt
-            grep -Eoi 'poster=["'"'"'][^"'"'"']+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/poster=["'"'"']//gi' >> /tmp/raw_urls.txt
-            
-            # الگوهای مخصوص CDN های معروف
-            grep -Eoi '(cdn\d*\.cloudfront\.net|cdn\d*\.digitaloceanspaces\.com|cloudinary\.com|imgix\.net|akamaihd\.net)[^"'"'"']+\.(jpg|jpeg|png|gif|webp)' "$file" | sed 's/^/https:\/\//g' >> /tmp/raw_urls.txt
-          done
-          
-          # پاکسازی و حذف تکراری
-          sort -u /tmp/raw_urls.txt | grep -E '\.(jpg|jpeg|png|gif|webp|avif|svg)' | grep -v '^$' > /tmp/thumbnails.txt
-          
-          echo "📸 تعداد تامبنیل‌های پیدا شده: $(wc -l < /tmp/thumbnails.txt)"
-          
-          # دانلود همه تامبنیل‌ها
-          mkdir -p ../thumbnails
-          counter=1
-          while IFS= read -r url; do
-            if [ ! -z "$url" ]; then
-              # ایجاد نام فایل یکتا
-              extension=$(echo "$url" | grep -oE '\.(jpg|jpeg|png|gif|webp|avif|svg)' | head -1)
-              filename="thumb_${counter}${extension}"
-              
-              echo "⬇️ [$counter] $(echo "$url" | cut -c1-80)..."
-              wget --timeout=15 --tries=3 --quiet -O "../thumbnails/$filename" "$url" 2>/dev/null && echo "✅" || echo "❌"
-              counter=$((counter+1))
-            fi
-          done < /tmp/thumbnails.txt
-          
-          cd ..
+          # نصب ChromeDriver برای کنترل کروم
+          sudo apt-get install -y unzip xvfb libxi6 libgconf-2-4
+          wget -q https://storage.googleapis.com/chrome-for-testing-public/latest/linux64/chromedriver-linux64.zip
+          unzip chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+          sudo chmod +x /usr/local/bin/chromedriver
 
-      - name: Scan HTML for lazy-loaded images
+      - name: 📸 ذخیره صفحه به عنوان MHTML با استفاده از اسکریپت پایتون
         run: |
-          cd site
-          
-          # پیدا کردن اسکریپت‌های حاوی داده‌های JSON
-          find . -name "*.js" -o -name "*.json" | while read file; do
-            # استخراج لینک‌هایی که با lazy loading لود می‌شن
-            grep -Eoi 'data-src=["'"'"'][^"'"'"']+' "$file" | sed 's/data-src=["'"'"']//g' >> /tmp/lazy_urls.txt
-            grep -Eoi 'data-original=["'"'"'][^"'"'"']+' "$file" | sed 's/data-original=["'"'"']//g' >> /tmp/lazy_urls.txt
-          done
-          
-          sort -u /tmp/lazy_urls.txt | grep -E '\.(jpg|jpeg|png|gif|webp)' > /tmp/lazy_images.txt
-          
-          while IFS= read -r url; do
-            if [ ! -z "$url" ]; then
-              filename=$(basename "$url" | cut -d'?' -f1)
-              wget --timeout=10 --tries=2 --quiet -O "../thumbnails/$filename" "$url" 2>/dev/null || true
-            fi
-          done < /tmp/lazy_images.txt
-          
-          cd ..
+          python3 - << EOF
+          import time
+          from selenium import webdriver
+          from selenium.webdriver.chrome.options import Options
 
-      - name: Create HTML page with local thumbnails
-        run: |
-          cd site
-          
-          # پیدا کردن فایل HTML اصلی
-          main_html=$(find . -maxdepth 2 -name "*.html" | head -1)
-          
-          if [ -f "$main_html" ]; then
-            # ساختن نسخه پشتیبان
-            cp "$main_html" "${main_html}.backup"
-            
-            # جایگزینی آدرس تامبنیل‌ها با عکس‌های محلی
-            counter=1
-            for thumb in ../thumbnails/*.jpg ../thumbnails/*.jpeg ../thumbnails/*.png ../thumbnails/*.webp 2>/dev/null; do
-              if [ -f "$thumb" ]; then
-                thumbname=$(basename "$thumb")
-                # جایگزینی در فایل HTML (با الگوهای مختلف)
-                sed -i "s|https?://[^\"]*thumb[^\"]*\.jpg|$thumbname|gi" "$main_html" 2>/dev/null || true
-                sed -i "s|https?://[^\"]*thumbnail[^\"]*\.jpg|$thumbname|gi" "$main_html" 2>/dev/null || true
-                sed -i "s|data-src=\"[^\"]*\.jpg\"|src=\"$thumbname\"|gi" "$main_html" 2>/dev/null || true
-                counter=$((counter+1))
-              fi
-            done
-          fi
-          
-          cd ..
+          # تنظیمات مرورگر کروم در حالت بی‌سر (بدون نمایش)
+          chrome_options = Options()
+          chrome_options.add_argument('--headless=new') # حالت بی‌سر جدید
+          chrome_options.add_argument('--no-sandbox')
+          chrome_options.add_argument('--disable-dev-shm-usage')
+          chrome_options.add_argument('--disable-gpu')
+          chrome_options.add_argument('--remote-debugging-port=9222')
 
-      - name: Package everything
-        run: |
-          cat > HOW_TO_USE.txt << 'EOF'
-          ========================================
-          ✅ همه چیز آماده است!
-          ========================================
-          
-          📁 پوشه‌های داخل فایل ZIP:
-          - site/         : صفحه اصلی و فایل‌های CSS/JS
-          - thumbnails/   : همه عکس‌های تامبنیل (کاور ویدیوها)
-          
-          📱 نحوه استفاده در اندروید:
-          
-          1. فایل کامل_page.zip رو دانلود کن
-          2. با Zarchiver اکسترکت کن
-          3. پوشه site رو باز کن
-          4. فایل index.html یا .html رو پیدا کن
-          5. با Chrome یا Firefox باز کن
-          
-          ✅ نکته: همه عکس‌های تامبنیل (حتی از CDN های مختلف) داخل پوشه thumbnails هستن
-          ✅ صفحه کامل با همه استایل‌ها نمایش داده میشه
-          ========================================
+          print("🚀 در حال راه‌اندازی مرورگر کروم...")
+          driver = webdriver.Chrome(options=chrome_options)
+
+          site_url = "${{ github.event.inputs.site_url }}"
+          print(f"🌐 در حال بارگذاری صفحه: {site_url}")
+          driver.get(site_url)
+
+          # صبر می‌کنیم تا صفحه و عکس‌های تامبنیل کاملاً لود بشن (مخصوص سایت شما)
+          print("⏳ در حال منتظر ماندن برای لود کامل عکس‌ها (چند ثانیه)...")
+          time.sleep(15) # افزایش زمان برای لود تامبنیل‌ها با JS
+
+          print("📄 در حال گرفتن خروجی MHTML...")
+          # این دستور جادویی کار ذخیره MHTML رو انجام میده
+          mhtml_data = driver.execute_cdp_cmd('Page.captureSnapshot', {})
+
+          # ذخیره خروجی در فایل
+          output_file = 'page_complete.mhtml'
+          with open(output_file, 'w', encoding='utf-8') as f:
+              f.write(mhtml_data['data'])
+
+          print(f"✅ فایل با موفقیت ذخیره شد: {output_file} (حجم: {len(mhtml_data['data']) / 1024:.2f} KB)")
+          driver.quit()
           EOF
-          
-          zip -r کامل_page.zip site/ thumbnails/ HOW_TO_USE.txt
-          
-          echo "📦 حجم فایل نهایی:"
-          ls -lh کامل_page.zip
 
-      - name: Commit and push
+      - name: 💾 ذخیره فایل MHTML در مخزن گیت‌هاب
+        run: |
+          # بررسی می‌کنیم که فایل ساخته شده
+          if [ -f "page_complete.mhtml" ]; then
+            echo "✅ فایل MHTML با موفقیت ساخته شد."
+            mkdir -p output
+            mv page_complete.mhtml output/
+            
+            # یک فایل راهنما برای اندروید می‌سازیم
+            cat > output/README_ANDROID.txt << 'EOF'
+            ========================================
+            ✅ فایل MHTML با موفقیت تهیه شد!
+            ========================================
+            
+            🔗 نحوه استفاده در اندروید:
+            1. فایل page_complete.mhtml رو دانلود کن (لینک پایین)
+            2. فایل رو با مرورگر کروم (یا فایرفاکس) باز کن
+            3. تمام عکس‌ها و استایل‌ها درست مثل حالت آنلاین نمایش داده می‌شن!
+            
+            📍 نکته: این روش توسط خود مرورگر کروم انجام شده،
+            بنابراین تمام منابع (حتی تامبنیل‌های سنگین) داخل این یک فایل هست.
+            ========================================
+            EOF
+          else
+            echo "❌ خطا: فایل MHTML ساخته نشد!"
+            exit 1
+          fi
+
+      - name: ارسال به مخزن گیت‌هاب
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git add site/ thumbnails/ کامل_page.zip HOW_TO_USE.txt
-          git diff --staged --quiet || git commit -m "صفحه کامل + تامبنیل‌های همه CDN ها"
+          git config user.email "github-actions@github.com"
+          git add output/
+          git diff --staged --quiet || git commit -m "ذخیره صفحه به صورت MHTML: ${{ github.event.inputs.site_url }}"
           git push
 
-      - name: Show result
+      - name: نمایش لینک دانلود نهایی
         run: |
           echo "=========================================="
-          echo "✅ دانلود کامل شد!"
+          echo "🎉 تمام! فایل MHTML مورد نظرت آماده است."
           echo ""
-          echo "📥 دانلود فایل نهایی:"
-          echo "https://github.com/${{ github.repository }}/tree/master/کامل_page.zip"
+          echo "📥 لینک مستقیم دانلود فایل MHTML:"
+          echo "https://github.com/${{ github.repository }}/tree/master/output/page_complete.mhtml"
           echo ""
-          echo "📂 تعداد عکس‌های تامبنیل ذخیره شده: $(ls thumbnails/ 2>/dev/null | wc -l) عدد"
+          echo "📱 برای اندروید: روی لینک بالا بزن، فایل دانلود می‌شه."
+          echo "   بعد با مرورگر کروم گوشیت بازش کن."
           echo "=========================================="
