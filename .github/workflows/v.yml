@@ -71,5 +71,5 @@ EOF
           echo "✅ سایت با موفقیت دانلود شد"
           echo ""
           echo "🔗 لینک دسترسی:"
-          echo "https://github.com/${{ github.repository }}/tree/main/mirrored-site"
+          echo "https://github.com/${{ github.repository }}/tree/master/mirrored-site"
           echo "=========================================="
