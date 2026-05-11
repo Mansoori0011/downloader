@@ -1,137 +1,33 @@
-name: Create VLESS+TLS Config on Port 8443
-
+name: "تست موقتی: ایجاد تونل با Cloudflare"
 on:
-  workflow_dispatch:
-    inputs:
-      custom_domain:
-        description: 'دامنه دلخواه برای SNI (مثال: dl.google.com)'
-        required: true
-        default: 'dl.google.com'
-      custom_host:
-        description: 'آدرس Host (میتوانید همان دامنه را وارد کنید)'
-        required: true
-        default: 'dl.google.com'
-
-permissions:
-  contents: write
+  workflow_dispatch:  # با این گزینه، خودتان اجرا را شروع می‌کنید
 
 jobs:
-  build-vless-config:
+  create-tunnel:
     runs-on: ubuntu-latest
     steps:
-      - name: 0. Clone مخزن (برای دسترسی به git)
-        uses: actions/checkout@v4
+      - name: نصب cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
 
-      - name: 1. دریافت IP عمومی رانر
-        id: get_ip
+      - name: اجرای یک سرویس نمونه (مثلاً وب سرور ساده)
         run: |
-          IP=$(curl -s https://api.ipify.org)
-          echo "RUNNER_IP=$IP" >> $GITHUB_ENV
-          echo "IP دریافت شد: $IP"
+          # یک فایل HTML ساده برای تست ایجاد می‌کنیم
+          echo "<h1>نمونه تست از GitHub Actions</h1>" > index.html
+          # یک وب سرور ساده روی پورت 8080 راه می‌اندازیم
+          python3 -m http.server 8080 &
 
-      - name: 2. ساخت UUID تصادفی
-        id: uuid
+      - name: ایجاد تونل Cloudflare
+        id: tunnel
+        uses: AnimMouse/setup-cloudflared/tunnel@v2
+        with:
+          url: http://localhost:8080  # پورتی که سرویس ما روش کار می‌کند
+
+      - name: نمایش آدرس تونل (لینک دسترسی)
         run: |
-          UUID=$(cat /proc/sys/kernel/random/uuid)
-          echo "UUID=$UUID" >> $GITHUB_ENV
-          echo "UUID ساخته شد: $UUID"
+          echo "✅ تونل با موفقیت برقرار شد."
+          echo "🔗 آدرس عمومی شما: ${{ steps.tunnel.outputs.tunnel_url }}"
+          echo "⏱ این تونل تا اتمام این مرحله (حدود ۶ ساعت) فعال خواهد بود."
+          echo "👇 از این آدرس در اپلیکیشن‌های تست خود استفاده کنید."
 
-      - name: 3. نصب و راه‌اندازی Xray روی پورت 8443
-        run: |
-          # نصب Xray
-          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          sudo apt install -y unzip
-          sudo unzip -o Xray-linux-64.zip -d /usr/local/bin/
-          sudo chmod +x /usr/local/bin/xray
-          
-          # ایجاد پوشه کانفیگ
-          sudo mkdir -p /usr/local/etc/xray/
-          
-          # ساخت فایل کانفیگ سرور
-          sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
-          {
-            \"inbounds\": [
-              {
-                \"port\": 8443,
-                \"protocol\": \"vless\",
-                \"settings\": {
-                  \"clients\": [
-                    {
-                      \"id\": \"$UUID\"
-                    }
-                  ],
-                  \"decryption\": \"none\"
-                },
-                \"streamSettings\": {
-                  \"network\": \"ws\",
-                  \"security\": \"tls\",
-                  \"tlsSettings\": {
-                    \"certificates\": [
-                      {
-                        \"certificateFile\": \"/etc/xray/cert.pem\",
-                        \"keyFile\": \"/etc/xray/key.pem\"
-                      }
-                    ]
-                  },
-                  \"wsSettings\": {
-                    \"path\": \"/\"
-                  }
-                }
-              }
-            ],
-            \"outbounds\": [
-              {
-                \"protocol\": \"freedom\"
-              }
-            ]
-          }
-          EOF"
-          
-          # اجرای Xray در پس‌زمینه
-          sudo /usr/local/bin/xray run -c /usr/local/etc/xray/config.json &
-
-      - name: 4. ایجاد تونل با Serveo (بدون ثبت‌نام) برای پورت 8443
-        run: |
-          # نصب SSH
-          sudo apt update && sudo apt install -y ssh
-          
-          # ایجاد تونل برای پورت 8443 (اجرا در پس‌زمینه)
-          ssh -o StrictHostKeyChecking=no -R 8443:localhost:8443 serveo.net &
-          sleep 5
-          
-          echo "✅ تونل روی پورت 8443 فعال شد"
-
-      - name: 5. ساخت لینک کانفیگ نهایی
-        run: |
-          CONFIG_URL="vless://$UUID@${{ env.RUNNER_IP }}:8443?path=%2F&security=tls&encryption=none&insecure=0&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=0&sni=${{ github.event.inputs.custom_domain }}#GitHubActions-VLESS-TLS"
-          
-          SERVEO_URL="vless://$UUID@serveo.net:8443?path=%2F&security=tls&encryption=none&insecure=1&host=${{ github.event.inputs.custom_host }}&fp=chrome&type=ws&allowInsecure=1&sni=${{ github.event.inputs.custom_domain }}#Serveo-VLESS-TLS"
-          
-          echo "=========================================" > v2ray-config-tls.txt
-          echo "🔗 لینک کانفیگ با IP مستقیم:" >> v2ray-config-tls.txt
-          echo "=========================================" >> v2ray-config-tls.txt
-          echo "$CONFIG_URL" >> v2ray-config-tls.txt
-          echo "" >> v2ray-config-tls.txt
-          echo "=========================================" >> v2ray-config-tls.txt
-          echo "🔗 لینک جایگزین با آدرس Serveo (پایدارتر):" >> v2ray-config-tls.txt
-          echo "=========================================" >> v2ray-config-tls.txt
-          echo "$SERVEO_URL" >> v2ray-config-tls.txt
-          echo "" >> v2ray-config-tls.txt
-          echo "📋 جزئیات کانفیگ:" >> v2ray-config-tls.txt
-          echo "آدرس: ${{ env.RUNNER_IP }} (یا serveo.net)" >> v2ray-config-tls.txt
-          echo "پورت: 8443" >> v2ray-config-tls.txt
-          echo "UUID: $UUID" >> v2ray-config-tls.txt
-          echo "⏱️ این سرویس به مدت 2 ساعت فعال است." >> v2ray-config-tls.txt
-          
-          cat v2ray-config-tls.txt
-
-      - name: 6. ذخیره فایل کانفیگ در مخزن
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add v2ray-config-tls.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "add vless tls config port 8443"
-          git push
-
-      - name: 7. نگهداری سرویس به مدت 2 ساعت
-        run: sleep 7200
+      - name: نگه داشتن رانر برای تست
+        run: sleep 7200  # رانر را به مدت ۲ ساعت روشن نگه می‌دارد (یا هر چقدر که نیاز دارید)
