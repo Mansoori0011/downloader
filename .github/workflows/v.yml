@@ -1,33 +1,113 @@
-name: "تست موقتی: ایجاد تونل با Cloudflare"
+name: ساخت خودکار V2Ray با SNI داخلی
+
 on:
-  workflow_dispatch:  # با این گزینه، خودتان اجرا را شروع می‌کنید
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  create-tunnel:
+  build-v2ray:
     runs-on: ubuntu-latest
     steps:
-      - name: نصب cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
-      - name: اجرای یک سرویس نمونه (مثلاً وب سرور ساده)
+      - name: 1️⃣ دریافت IP رانر
+        id: ip
         run: |
-          # یک فایل HTML ساده برای تست ایجاد می‌کنیم
-          echo "<h1>نمونه تست از GitHub Actions</h1>" > index.html
-          # یک وب سرور ساده روی پورت 8080 راه می‌اندازیم
-          python3 -m http.server 8080 &
+          IP=$(curl -s https://api.ipify.org)
+          echo "RUNNER_IP=$IP" >> $GITHUB_ENV
 
-      - name: ایجاد تونل Cloudflare
+      - name: 2️⃣ ساخت UUID تصادفی
+        id: uuid
+        run: |
+          UUID=$(cat /proc/sys/kernel/random/uuid)
+          echo "UUID=$UUID" >> $GITHUB_ENV
+
+      - name: 3️⃣ نصب Xray
+        run: |
+          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          sudo apt install -y unzip
+          sudo unzip -o Xray-linux-64.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/xray
+
+      - name: 4️⃣ ساخت کانفیگ سرور با SNI داخلی
+        run: |
+          sudo mkdir -p /usr/local/etc/xray/
+          sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
+          {
+            \"inbounds\": [
+              {
+                \"port\": 8080,
+                \"protocol\": \"vless\",
+                \"settings\": {
+                  \"clients\": [{\"id\": \"${{ env.UUID }}\"}],
+                  \"decryption\": \"none\"
+                },
+                \"streamSettings\": {
+                  \"network\": \"ws\",
+                  \"wsSettings\": {
+                    \"path\": \"/\"
+                  }
+                }
+              }
+            ],
+            \"outbounds\": [{\"protocol\": \"freedom\"}]
+          }
+          EOF"
+
+      - name: 5️⃣ اجرای Xray در پس‌زمینه
+        run: |
+          sudo /usr/local/bin/xray run -c /usr/local/etc/xray/config.json &
+          sleep 3
+
+      - name: 6️⃣ دریافت آدرس تونل از serveo.net (بدون ثبت‌نام)
         id: tunnel
-        uses: AnimMouse/setup-cloudflared/tunnel@v2
-        with:
-          url: http://localhost:8080  # پورتی که سرویس ما روش کار می‌کند
-
-      - name: نمایش آدرس تونل (لینک دسترسی)
         run: |
-          echo "✅ تونل با موفقیت برقرار شد."
-          echo "🔗 آدرس عمومی شما: ${{ steps.tunnel.outputs.tunnel_url }}"
-          echo "⏱ این تونل تا اتمام این مرحله (حدود ۶ ساعت) فعال خواهد بود."
-          echo "👇 از این آدرس در اپلیکیشن‌های تست خود استفاده کنید."
+          sudo apt update && sudo apt install -y ssh
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 serveo.net &
+          sleep 5
+          echo "TUNNEL_URL=serveo.net" >> $GITHUB_ENV
 
-      - name: نگه داشتن رانر برای تست
-        run: sleep 7200  # رانر را به مدت ۲ ساعت روشن نگه می‌دارد (یا هر چقدر که نیاز دارید)
+      - name: 7️⃣ ساخت لینک کانفیگ نهایی (با SNI همشهری آنلاین)
+        run: |
+          # === قسمت SNI داخلی ===
+          SNI_HOST="www.hamshahrionline.ir"
+          
+          # لینک اصلی
+          CONFIG_URL="vless://${{ env.UUID }}@serveo.net:80?encryption=none&security=none&type=ws&host=$SNI_HOST&sni=$SNI_HOST&path=%2F&fp=chrome#GitHub-V2Ray"
+          
+          # لینک پشتیبان (با IP مستقیم)
+          CONFIG_URL2="vless://${{ env.UUID }}@${{ env.RUNNER_IP }}:8080?encryption=none&security=none&type=ws&host=$SNI_HOST&sni=$SNI_HOST&path=%2F&fp=chrome#GitHub-V2Ray-Direct"
+          
+          echo "=========================================" > v2ray-final-config.txt
+          echo "🔐 کانفیگ V2RayNG - کپی کن و import کن" >> v2ray-final-config.txt
+          echo "=========================================" >> v2ray-final-config.txt
+          echo "" >> v2ray-final-config.txt
+          echo "✅ لینک اصلی (توصیه می‌شود):" >> v2ray-final-config.txt
+          echo "$CONFIG_URL" >> v2ray-final-config.txt
+          echo "" >> v2ray-final-config.txt
+          echo "✅ لینک پشتیبان (آی پی مستقیم):" >> v2ray-final-config.txt
+          echo "$CONFIG_URL2" >> v2ray-final-config.txt
+          echo "" >> v2ray-final-config.txt
+          echo "📋 اطلاعات کانفیگ:" >> v2ray-final-config.txt
+          echo "پروتکل: VLESS" >> v2ray-final-config.txt
+          echo "پورت اصلی: 80 (از طریق تونل serveo)" >> v2ray-final-config.txt
+          echo "پورت پشتیبان: 8080 (مستقیم)" >> v2ray-final-config.txt
+          echo "SNI (Internal): $SNI_HOST" >> v2ray-final-config.txt
+          echo "UUID: ${{ env.UUID }}" >> v2ray-final-config.txt
+          echo "Network: WebSocket" >> v2ray-final-config.txt
+          echo "Path: /" >> v2ray-final-config.txt
+          echo "" >> v2ray-final-config.txt
+          echo "⏱ سرویس به مدت 2 ساعت فعال است" >> v2ray-final-config.txt
+          
+          cat v2ray-final-config.txt
+
+      - name: 8️⃣ ذخیره فایل در مخزن (برای دسترسی بعدی)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add v2ray-final-config.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "v2ray config with internal sni"
+          git push
+
+      - name: 9️⃣ نگهداری سرویس (2 ساعت)
+        run: sleep 7200
