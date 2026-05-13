@@ -1,84 +1,21 @@
-name: 'ایجاد تونل HTTP برای سایفون (Psiphon)'
+name: 'SSH Tunnel for Psiphon'
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  tunnel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: نصب ابزارهای مورد نیاز
-        run: |
-          sudo apt-get update
-          # نصب tinyproxy، یک پروکسی HTTP سبک و پایدار
-          sudo apt-get install -y tinyproxy jq
-          # نصب cloudflared برای ایجاد تونل
-          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared-linux-amd64
-          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-
-      - name: راه‌اندازی سرور پروکسی HTTP
-        run: |
-          # تنظیمات tinyproxy برای اتصال از همه جا
-          sudo bash -c 'cat > /etc/tinyproxy/tinyproxy.conf << EOF
-          Port 8080
-          Listen 0.0.0.0
-          Allow 0.0.0.0/0
-          Timeout 600
-          ViaProxyName "github-actions-proxy"
-          DisableViaHeader Yes
-          EOF'
-
-          # راه‌اندازی سرویس tinyproxy
-          sudo service tinyproxy start
-          echo "✅ پروکسی HTTP روی پورت 8080 راه‌اندازی شد."
-
-      - name: ایجاد تونل عمومی
-        run: |
-          # اجرای تونل و ذخیره لاگ در فایل
-          cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
-          
-          # منتظر می‌مانیم تا تونل ساخته شود
-          echo "منتظر برقراری تونل (حداکثر 20 ثانیه)..."
-          sleep 20
-          
-          # استخراج آدرس تونل از لاگ
-          TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1)
-          
-          echo "═══════════════════════════════════════════════════════════"
-          echo "✅ تونل با موفقیت برقرار شد!"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
-          if [ -n "$TUNNEL_URL" ]; then
-            # حذف https:// و / از انتهای آدرس
-            PROXY_HOST=$(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/||')
-            
-            echo "🌐 آدرس تونل عمومی شما: $TUNNEL_URL"
-            echo "🔌 پورت: 80"
-            echo "📡 نوع: HTTP"
-            echo ""
-            echo "📱 تنظیمات داخل برنامه سایفون (Psiphon):"
-            echo "   1. از تنظیمات (Options) وارد شوید."
-            echo "   2. گزینه 'Proxy Settings' را انتخاب کنید."
-            echo "   3. 'Connect through an HTTP Proxy' را فعال کنید."
-            echo "   4. گزینه 'Use the following settings' را انتخاب کنید."
-            echo "   5. مقادیر را وارد کنید:"
-            echo "      ┌─────────────────────────────────────────┐"
-            echo "      │ آدرس (Host Address): $PROXY_HOST │"
-            echo "      │ پورت (Port):         80                │"
-            echo "      └─────────────────────────────────────────┘"
-            echo ""
-            echo "💡 تست مستقیم در ترمینال Termux:"
-            echo "   export http_proxy=http://$PROXY_HOST:80"
-            echo "   curl https://api.my-ip.io/ip"
-          else
-            echo "❌ خطا: آدرس تونل پیدا نشد."
-            echo "لاگ cloudflared برای بررسی:"
-            cat cloudflared.log
-          fi
-          echo "═══════════════════════════════════════════════════════════"
-          
-          # جلوگیری از بسته شدن workflow برای 6 ساعت
-          sleep 6h
+      - name: راه‌اندازی SSH Session
+        uses: lhotari/action-upterm@v1
+        with:
+          limit-access-to-actor: true
+          ssh-command: | 
+            sudo apt-get update && sudo apt-get install -y tinyproxy
+            sudo bash -c 'echo "Port 8080" > /etc/tinyproxy/tinyproxy.conf'
+            sudo bash -c 'echo "Listen 0.0.0.0" >> /etc/tinyproxy/tinyproxy.conf'
+            sudo bash -c 'echo "Allow 0.0.0.0/0" >> /etc/tinyproxy/tinyproxy.conf'
+            sudo service tinyproxy start
+            echo "✅ پروکسی HTTP روی پورت 8080 در حال اجراست."
+            tail -f /dev/null
