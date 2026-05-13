@@ -1,21 +1,9 @@
-name: 'SSH Tunnel for Psiphon'
-
+name: 'Wush SSH Tunnel'
 on:
   workflow_dispatch:
 
 jobs:
-  tunnel:
+  wush:
     runs-on: ubuntu-latest
     steps:
-      - name: راه‌اندازی SSH Session
-        uses: lhotari/action-upterm@v1
-        with:
-          limit-access-to-actor: true
-          ssh-command: | 
-            sudo apt-get update && sudo apt-get install -y tinyproxy
-            sudo bash -c 'echo "Port 8080" > /etc/tinyproxy/tinyproxy.conf'
-            sudo bash -c 'echo "Listen 0.0.0.0" >> /etc/tinyproxy/tinyproxy.conf'
-            sudo bash -c 'echo "Allow 0.0.0.0/0" >> /etc/tinyproxy/tinyproxy.conf'
-            sudo service tinyproxy start
-            echo "✅ پروکسی HTTP روی پورت 8080 در حال اجراست."
-            tail -f /dev/null
+      - uses: coder/wush-action@v1.0.0
