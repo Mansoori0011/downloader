@@ -1,4 +1,4 @@
-name: Temporary VPS with Panel
+name: VPS with Cloudflare Tunnel
 
 on:
   workflow_dispatch:
@@ -11,39 +11,44 @@ jobs:
     steps:
       - name: Create temporary VPS container
         run: |
-          echo "⏳ Creating temporary VPS (will run for 3 hours)..."
           docker run -d \
             --name temp-vps \
-            --restart no \
             -p 80:80 \
             -p 443:443 \
             -p 54321:54321 \
             ubuntu:22.04 \
             sleep 10800
 
-      - name: Install dependencies inside VPS
+      - name: Install dependencies & Panel
         run: |
-          docker exec temp-vps bash -c "apt-get update && apt-get install -y curl wget ufw socat"
+          docker exec temp-vps bash -c "
+            apt-get update && \
+            apt-get install -y curl wget && \
+            curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash
+          "
 
-      - name: Install 3x-UI Panel
-        run: |
-          docker exec temp-vps bash -c 'curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash'
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
 
-      - name: Get Access Information
+      - name: Create Cloudflare Tunnel (Public URL)
+        uses: AnimMouse/setup-cloudflared/tunnel@v2
+        with:
+          url: http://localhost:54321   # پورت پنل
+
+      - name: Show Access Info
         run: |
           echo "═══════════════════════════════════════════"
-          echo "✅ VPS is READY for 3 hours!"
+          echo "✅ VPS READY - Accessible from ANYWHERE!"
           echo "═══════════════════════════════════════════"
           echo ""
-          CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' temp-vps)
-          echo "🌐 Panel Access: http://$CONTAINER_IP:54321"
-          echo "🔑 Login: admin / admin"
+          echo "🔗 Find your public URL in the logs above ☝️"
+          echo "   It looks like: https://random-name.trycloudflare.com"
           echo ""
-          echo "📡 Enter container: docker exec -it temp-vps bash"
-          echo "⏰ Auto-delete in 3 hours"
+          echo "🌐 Panel Login: admin / admin"
+          echo "⏰ Active for 3 hours"
           echo "═══════════════════════════════════════════"
 
-      - name: Keep VPS alive
+      - name: Keep Alive
         run: sleep 10800
 
       - name: Cleanup
@@ -51,4 +56,3 @@ jobs:
         run: |
           docker stop temp-vps || true
           docker rm temp-vps || true
-          echo "✅ VPS deleted"
