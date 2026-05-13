@@ -1,113 +1,51 @@
-name: ساخت خودکار V2Ray با SNI داخلی
+name: 'برقراری تونل برای یک پروکسی SOCKS5'
 
 on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
+  workflow_dispatch:  # با کلیک روی دکمه Run workflow اجرا می‌شود
 
 jobs:
-  build-v2ray:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1️⃣ دریافت IP رانر
-        id: ip
-        run: |
-          IP=$(curl -s https://api.ipify.org)
-          echo "RUNNER_IP=$IP" >> $GITHUB_ENV
+      - uses: actions/checkout@v4
 
-      - name: 2️⃣ ساخت UUID تصادفی
-        id: uuid
+      - name: نصب ابزارهای مورد نیاز
         run: |
-          UUID=$(cat /proc/sys/kernel/random/uuid)
-          echo "UUID=$UUID" >> $GITHUB_ENV
+          sudo apt-get update
+          # نصب dante-server برای اجرای یک پروکسی SOCKS5 سبک
+          sudo apt-get install -y dante-server
+          # دانلود ابزار cloudflared برای ایجاد تونل
+          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: 3️⃣ نصب Xray
+      - name: راه‌اندازی سرور SOCKS5
         run: |
-          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          sudo apt install -y unzip
-          sudo unzip -o Xray-linux-64.zip -d /usr/local/bin/
-          sudo chmod +x /usr/local/bin/xray
-
-      - name: 4️⃣ ساخت کانفیگ سرور با SNI داخلی
-        run: |
-          sudo mkdir -p /usr/local/etc/xray/
-          sudo bash -c "cat > /usr/local/etc/xray/config.json << EOF
-          {
-            \"inbounds\": [
-              {
-                \"port\": 8080,
-                \"protocol\": \"vless\",
-                \"settings\": {
-                  \"clients\": [{\"id\": \"${{ env.UUID }}\"}],
-                  \"decryption\": \"none\"
-                },
-                \"streamSettings\": {
-                  \"network\": \"ws\",
-                  \"wsSettings\": {
-                    \"path\": \"/\"
-                  }
-                }
-              }
-            ],
-            \"outbounds\": [{\"protocol\": \"freedom\"}]
+          # کانفیگ ساده danted برای اجرا روی همه پورت‌ها
+          sudo bash -c 'cat > /etc/danted.conf << EOF
+          logoutput: stderr
+          internal: 0.0.0.0 port=1080
+          external: eth0
+          method: none
+          client pass {
+              from: 0.0.0.0/0 to: 0.0.0.0/0
           }
-          EOF"
+          pass {
+              from: 0.0.0.0/0 to: 0.0.0.0/0
+              protocol: tcp
+          }
+          EOF'
+          sudo danted -f /etc/danted.conf
+          echo "✅ پروکسی SOCKS5 روی پورت 1080 راه‌اندازی شد."
 
-      - name: 5️⃣ اجرای Xray در پس‌زمینه
+      - name: ایجاد تونل عمومی با Cloudflared
         run: |
-          sudo /usr/local/bin/xray run -c /usr/local/etc/xray/config.json &
-          sleep 3
-
-      - name: 6️⃣ دریافت آدرس تونل از serveo.net (بدون ثبت‌نام)
-        id: tunnel
-        run: |
-          sudo apt update && sudo apt install -y ssh
-          ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 serveo.net &
-          sleep 5
-          echo "TUNNEL_URL=serveo.net" >> $GITHUB_ENV
-
-      - name: 7️⃣ ساخت لینک کانفیگ نهایی (با SNI همشهری آنلاین)
-        run: |
-          # === قسمت SNI داخلی ===
-          SNI_HOST="www.hamshahrionline.ir"
-          
-          # لینک اصلی
-          CONFIG_URL="vless://${{ env.UUID }}@serveo.net:80?encryption=none&security=none&type=ws&host=$SNI_HOST&sni=$SNI_HOST&path=%2F&fp=chrome#GitHub-V2Ray"
-          
-          # لینک پشتیبان (با IP مستقیم)
-          CONFIG_URL2="vless://${{ env.UUID }}@${{ env.RUNNER_IP }}:8080?encryption=none&security=none&type=ws&host=$SNI_HOST&sni=$SNI_HOST&path=%2F&fp=chrome#GitHub-V2Ray-Direct"
-          
-          echo "=========================================" > v2ray-final-config.txt
-          echo "🔐 کانفیگ V2RayNG - کپی کن و import کن" >> v2ray-final-config.txt
-          echo "=========================================" >> v2ray-final-config.txt
-          echo "" >> v2ray-final-config.txt
-          echo "✅ لینک اصلی (توصیه می‌شود):" >> v2ray-final-config.txt
-          echo "$CONFIG_URL" >> v2ray-final-config.txt
-          echo "" >> v2ray-final-config.txt
-          echo "✅ لینک پشتیبان (آی پی مستقیم):" >> v2ray-final-config.txt
-          echo "$CONFIG_URL2" >> v2ray-final-config.txt
-          echo "" >> v2ray-final-config.txt
-          echo "📋 اطلاعات کانفیگ:" >> v2ray-final-config.txt
-          echo "پروتکل: VLESS" >> v2ray-final-config.txt
-          echo "پورت اصلی: 80 (از طریق تونل serveo)" >> v2ray-final-config.txt
-          echo "پورت پشتیبان: 8080 (مستقیم)" >> v2ray-final-config.txt
-          echo "SNI (Internal): $SNI_HOST" >> v2ray-final-config.txt
-          echo "UUID: ${{ env.UUID }}" >> v2ray-final-config.txt
-          echo "Network: WebSocket" >> v2ray-final-config.txt
-          echo "Path: /" >> v2ray-final-config.txt
-          echo "" >> v2ray-final-config.txt
-          echo "⏱ سرویس به مدت 2 ساعت فعال است" >> v2ray-final-config.txt
-          
-          cat v2ray-final-config.txt
-
-      - name: 8️⃣ ذخیره فایل در مخزن (برای دسترسی بعدی)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add v2ray-final-config.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "v2ray config with internal sni"
-          git push
-
-      - name: 9️⃣ نگهداری سرویس (2 ساعت)
-        run: sleep 7200
+          # اجرای تونل به سمت پورت پروکسی
+          cloudflared tunnel --url http://localhost:1080 &
+          sleep 10
+          # دریافت و نمایش آدرس عمومی تونل
+          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "🌐 آدرس تونل عمومی شما: $TUNNEL_URL"
+          echo "🔑 این یک پروکسی SOCKS5 است. از آن در برنامه‌ها استفاده کنید."
+          # نگه داشتن جریان اجرا
+          tail -f /dev/null
