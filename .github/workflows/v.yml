@@ -1,12 +1,12 @@
 name: Temporary VPS with Panel
 
 on:
-  workflow_dispatch:  # با زدن دکمه Run workflow اجرا می‌شود
+  workflow_dispatch:
 
 jobs:
   vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # 3 ساعت = 180 دقیقه
+    timeout-minutes: 180
     
     steps:
       - name: Create temporary VPS container
@@ -19,16 +19,15 @@ jobs:
             -p 443:443 \
             -p 54321:54321 \
             ubuntu:22.04 \
-            sleep 10800  # 3 ساعت خواب
+            sleep 10800
 
-      - name: Install Panel inside VPS
+      - name: Install dependencies inside VPS
         run: |
-          echo "📦 Installing 3x-UI Panel (Sanaei)..."
-          docker exec temp-vps bash -c "
-            apt-get update && \
-            apt-get install -y curl wget ufw socat && \
-            bash -c '\''curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh'\'' -s -- --install
-          "
+          docker exec temp-vps bash -c "apt-get update && apt-get install -y curl wget ufw socat"
+
+      - name: Install 3x-UI Panel
+        run: |
+          docker exec temp-vps bash -c 'curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash'
 
       - name: Get Access Information
         run: |
@@ -36,36 +35,20 @@ jobs:
           echo "✅ VPS is READY for 3 hours!"
           echo "═══════════════════════════════════════════"
           echo ""
-          echo "📡 SSH Access (inside Actions runner):"
-          echo "   docker exec -it temp-vps bash"
-          echo ""
-          echo "🌐 Panel Access:"
           CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' temp-vps)
-          echo "   http://$CONTAINER_IP:54321"
-          echo "   (or http://localhost:54321 if testing locally)"
+          echo "🌐 Panel Access: http://$CONTAINER_IP:54321"
+          echo "🔑 Login: admin / admin"
           echo ""
-          echo "Default Panel Login:"
-          echo "   Username: admin"
-          echo "   Password: admin"
-          echo ""
-          echo "⏰ This VPS will auto-delete in 3 hours"
+          echo "📡 Enter container: docker exec -it temp-vps bash"
+          echo "⏰ Auto-delete in 3 hours"
           echo "═══════════════════════════════════════════"
 
-      - name: Keep VPS alive for 3 hours
-        run: |
-          echo "🕐 VPS is running. Waiting 3 hours..."
-          echo "You can SSH into it from another terminal:"
-          echo "docker exec -it temp-vps bash"
-          echo ""
-          echo "Press Ctrl+C to cancel earlier (VPS will be deleted)"
-          
-          # Wait for 3 hours or until cancelled
-          sleep 10800
-          
+      - name: Keep VPS alive
+        run: sleep 10800
+
       - name: Cleanup
-        if: always()  # حتی اگر خطا هم بیاید، پاک می‌کند
+        if: always()
         run: |
-          echo "🧹 Cleaning up temporary VPS..."
           docker stop temp-vps || true
           docker rm temp-vps || true
           echo "✅ VPS deleted"
