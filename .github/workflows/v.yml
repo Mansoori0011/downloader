@@ -1,9 +1,11 @@
-name: 'Wush SSH Tunnel'
+name: 'SSH Session with tmate'
+
 on:
   workflow_dispatch:
 
 jobs:
-  wush:
+  tmate:
     runs-on: ubuntu-latest
     steps:
-      - uses: coder/wush-action@v1.0.0
+      - name: راه‌اندازی جلسه SSH
+        uses: mxschmitt/action-tmate@v3
