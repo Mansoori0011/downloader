@@ -1,7 +1,7 @@
-name: 'برقراری تونل برای یک پروکسی SOCKS5'
+name: 'برقراری تونل برای پروکسی HTTP'
 
 on:
-  workflow_dispatch:  # با کلیک روی دکمه Run workflow اجرا می‌شود
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,40 +12,67 @@ jobs:
       - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
-          # نصب dante-server برای اجرای یک پروکسی SOCKS5 سبک
-          sudo apt-get install -y dante-server
-          # دانلود ابزار cloudflared برای ایجاد تونل
+          sudo apt-get install -y jq
+          # نصب tinyproxy (یک پروکسی HTTP سبک)
+          sudo apt-get install -y tinyproxy
           wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: راه‌اندازی سرور SOCKS5
+      - name: راه‌اندازی سرور HTTP Proxy
         run: |
-          # کانفیگ ساده danted برای اجرا روی همه پورت‌ها
-          sudo bash -c 'cat > /etc/danted.conf << EOF
-          logoutput: stderr
-          internal: 0.0.0.0 port=1080
-          external: eth0
-          method: none
-          client pass {
-              from: 0.0.0.0/0 to: 0.0.0.0/0
-          }
-          pass {
-              from: 0.0.0.0/0 to: 0.0.0.0/0
-              protocol: tcp
-          }
+          # تنظیمات tinyproxy
+          sudo bash -c 'cat > /etc/tinyproxy/tinyproxy.conf << EOF
+          Port 8080
+          Listen 0.0.0.0
+          Allow 0.0.0.0/0
+          Timeout 600
+          DefaultErrorFile "/usr/share/tinyproxy/default.html"
+          StatFile "/usr/share/tinyproxy/stats.html"
+          LogFile "/var/log/tinyproxy/tinyproxy.log"
+          LogLevel Info
+          PidFile "/run/tinyproxy/tinyproxy.pid"
+          MaxClients 100
+          MinSpareServers 5
+          MaxSpareServers 20
+          StartServers 10
+          MaxRequestsPerChild 0
+          ViaProxyName "tinyproxy"
+          DisableViaHeader Yes
           EOF'
-          sudo danted -f /etc/danted.conf
-          echo "✅ پروکسی SOCKS5 روی پورت 1080 راه‌اندازی شد."
+          
+          sudo systemctl start tinyproxy || sudo service tinyproxy start
+          echo "✅ پروکسی HTTP روی پورت 8080 راه‌اندازی شد."
 
-      - name: ایجاد تونل عمومی با Cloudflared
+      - name: ایجاد تونل و نمایش آدرس
         run: |
-          # اجرای تونل به سمت پورت پروکسی
-          cloudflared tunnel --url http://localhost:1080 &
-          sleep 10
-          # دریافت و نمایش آدرس عمومی تونل
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "🌐 آدرس تونل عمومی شما: $TUNNEL_URL"
-          echo "🔑 این یک پروکسی SOCKS5 است. از آن در برنامه‌ها استفاده کنید."
-          # نگه داشتن جریان اجرا
-          tail -f /dev/null
+          cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
+          sleep 15
+          
+          TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1)
+          
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ تونل با موفقیت برقرار شد!"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          if [ -n "$TUNNEL_URL" ]; then
+            echo "🌐 آدرس تونل عمومی: $TUNNEL_URL"
+            echo ""
+            echo "📱 در برنامه سایفون (Psiphon) تنظیم کنید:"
+            echo "   ┌─────────────────────────────────────────┐"
+            echo "   │ ☑️ اتصال از طریق پروکسی HTTP            │"
+            echo "   │ ☑️ استفاده از این تنظیمات:              │"
+            echo "   │                                         │"
+            echo "   │    آدرس: $(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/||') │"
+            echo "   │    پورت: 80                             │"
+            echo "   └─────────────────────────────────────────┘"
+            echo ""
+            echo "⏱️ این تونل به مدت 6 ساعت فعال خواهد ماند."
+          else
+            echo "❌ خطا: آدرس تونل پیدا نشد."
+            cat cloudflared.log
+          fi
+          echo "═══════════════════════════════════════════════════════════"
+          
+          sleep 6h
