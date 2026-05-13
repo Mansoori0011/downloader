@@ -1,4 +1,4 @@
-name: 'برقراری تونل برای پروکسی HTTP'
+name: 'ایجاد تونل HTTP برای سایفون (Psiphon)'
 
 on:
   workflow_dispatch:
@@ -12,67 +12,73 @@ jobs:
       - name: نصب ابزارهای مورد نیاز
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq
-          # نصب tinyproxy (یک پروکسی HTTP سبک)
-          sudo apt-get install -y tinyproxy
+          # نصب tinyproxy، یک پروکسی HTTP سبک و پایدار
+          sudo apt-get install -y tinyproxy jq
+          # نصب cloudflared برای ایجاد تونل
           wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: راه‌اندازی سرور HTTP Proxy
+      - name: راه‌اندازی سرور پروکسی HTTP
         run: |
-          # تنظیمات tinyproxy
+          # تنظیمات tinyproxy برای اتصال از همه جا
           sudo bash -c 'cat > /etc/tinyproxy/tinyproxy.conf << EOF
           Port 8080
           Listen 0.0.0.0
           Allow 0.0.0.0/0
           Timeout 600
-          DefaultErrorFile "/usr/share/tinyproxy/default.html"
-          StatFile "/usr/share/tinyproxy/stats.html"
-          LogFile "/var/log/tinyproxy/tinyproxy.log"
-          LogLevel Info
-          PidFile "/run/tinyproxy/tinyproxy.pid"
-          MaxClients 100
-          MinSpareServers 5
-          MaxSpareServers 20
-          StartServers 10
-          MaxRequestsPerChild 0
-          ViaProxyName "tinyproxy"
+          ViaProxyName "github-actions-proxy"
           DisableViaHeader Yes
           EOF'
-          
-          sudo systemctl start tinyproxy || sudo service tinyproxy start
+
+          # راه‌اندازی سرویس tinyproxy
+          sudo service tinyproxy start
           echo "✅ پروکسی HTTP روی پورت 8080 راه‌اندازی شد."
 
-      - name: ایجاد تونل و نمایش آدرس
+      - name: ایجاد تونل عمومی
         run: |
+          # اجرای تونل و ذخیره لاگ در فایل
           cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
-          sleep 15
           
+          # منتظر می‌مانیم تا تونل ساخته شود
+          echo "منتظر برقراری تونل (حداکثر 20 ثانیه)..."
+          sleep 20
+          
+          # استخراج آدرس تونل از لاگ
           TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1)
           
-          echo ""
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ تونل با موفقیت برقرار شد!"
           echo "═══════════════════════════════════════════════════════════"
           echo ""
           if [ -n "$TUNNEL_URL" ]; then
-            echo "🌐 آدرس تونل عمومی: $TUNNEL_URL"
+            # حذف https:// و / از انتهای آدرس
+            PROXY_HOST=$(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/||')
+            
+            echo "🌐 آدرس تونل عمومی شما: $TUNNEL_URL"
+            echo "🔌 پورت: 80"
+            echo "📡 نوع: HTTP"
             echo ""
-            echo "📱 در برنامه سایفون (Psiphon) تنظیم کنید:"
-            echo "   ┌─────────────────────────────────────────┐"
-            echo "   │ ☑️ اتصال از طریق پروکسی HTTP            │"
-            echo "   │ ☑️ استفاده از این تنظیمات:              │"
-            echo "   │                                         │"
-            echo "   │    آدرس: $(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/||') │"
-            echo "   │    پورت: 80                             │"
-            echo "   └─────────────────────────────────────────┘"
+            echo "📱 تنظیمات داخل برنامه سایفون (Psiphon):"
+            echo "   1. از تنظیمات (Options) وارد شوید."
+            echo "   2. گزینه 'Proxy Settings' را انتخاب کنید."
+            echo "   3. 'Connect through an HTTP Proxy' را فعال کنید."
+            echo "   4. گزینه 'Use the following settings' را انتخاب کنید."
+            echo "   5. مقادیر را وارد کنید:"
+            echo "      ┌─────────────────────────────────────────┐"
+            echo "      │ آدرس (Host Address): $PROXY_HOST │"
+            echo "      │ پورت (Port):         80                │"
+            echo "      └─────────────────────────────────────────┘"
             echo ""
-            echo "⏱️ این تونل به مدت 6 ساعت فعال خواهد ماند."
+            echo "💡 تست مستقیم در ترمینال Termux:"
+            echo "   export http_proxy=http://$PROXY_HOST:80"
+            echo "   curl https://api.my-ip.io/ip"
           else
             echo "❌ خطا: آدرس تونل پیدا نشد."
+            echo "لاگ cloudflared برای بررسی:"
             cat cloudflared.log
           fi
           echo "═══════════════════════════════════════════════════════════"
           
+          # جلوگیری از بسته شدن workflow برای 6 ساعت
           sleep 6h
