@@ -1,58 +1,27 @@
-name: VPS with Cloudflare Tunnel
+name: SSH Tunnel with 3x-UI
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # فقط دستی اجرا بشه
 
 jobs:
-  vps:
+  tunnel:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    
     steps:
-      - name: Create temporary VPS container
+      - name: Install tmate and 3x-ui
         run: |
-          docker run -d \
-            --name temp-vps \
-            -p 80:80 \
-            -p 443:443 \
-            -p 54321:54321 \
-            ubuntu:22.04 \
-            sleep 10800
+          # نصب tmate برای اتصال SSH
+          sudo apt update
+          sudo apt install -y tmate curl wget
 
-      - name: Install dependencies & Panel
+      - name: Start tmate
         run: |
-          docker exec temp-vps bash -c "
-            apt-get update && \
-            apt-get install -y curl wget && \
-            curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash
-          "
-
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
-      - name: Create Cloudflare Tunnel (Public URL)
-        uses: AnimMouse/setup-cloudflared/tunnel@v2
-        with:
-          url: http://localhost:54321   # پورت پنل
-
-      - name: Show Access Info
-        run: |
-          echo "═══════════════════════════════════════════"
-          echo "✅ VPS READY - Accessible from ANYWHERE!"
-          echo "═══════════════════════════════════════════"
-          echo ""
-          echo "🔗 Find your public URL in the logs above ☝️"
-          echo "   It looks like: https://random-name.trycloudflare.com"
-          echo ""
-          echo "🌐 Panel Login: admin / admin"
-          echo "⏰ Active for 3 hours"
-          echo "═══════════════════════════════════════════"
-
-      - name: Keep Alive
-        run: sleep 10800
-
-      - name: Cleanup
-        if: always()
-        run: |
-          docker stop temp-vps || true
-          docker rm temp-vps || true
+          # اجرای tmate در background
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          echo "========================================="
+          echo "SSH Connection String:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+          echo "========================================="
+          echo "tmate is running. Press Ctrl+C to stop."
+          # نگه داشتن workflow برای 6 ساعت (حداکثر)
+          sleep 6h
